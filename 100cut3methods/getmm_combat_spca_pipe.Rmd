@@ -1,0 +1,820 @@
+---
+title: "sparseComBat"
+author: "Jacob"
+date: "2/18/2020"
+output: html_document
+---
+
+```{r}
+#Packages used
+
+##if (!requireNamespace("BiocManager", quietly = TRUE))
+##   install.packages("BiocManager")
+##BiocManager::install("EnsDb.Hsapiens.v86")
+##BiocManager::install("TCGAbiolinks")
+##BiocManager::install("sva")
+##BiocManager::install("maftools")
+##
+##
+##install.packages("dplyr")
+##install.packages("sqldf")
+##install.packages("edgeR")
+##install.packages("limma")
+##install.packages("plotly")
+##install.packages('jsonlite')
+##install.packages("Rfast")
+
+library(Rfast)
+library(maftools)
+library(sva)
+library(TCGAbiolinks)
+library(jsonlite)
+library(EnsDb.Hsapiens.v86)
+library(tibble)
+library(dplyr)
+library(sqldf)
+library(limma)
+library(edgeR)
+library(plotly)
+library(stringr)
+library(ggplot2)
+```
+
+```{r}
+
+
+#data from 8/9/19
+#write.csv(dataPrep, 'ProstateCount_080919.csv')
+tcga_prostate<-read.csv("C:/Users/u6024115/Desktop/TCGA/ProstateCount_080919.csv")
+```
+
+### getting gene length
+
+```{r}
+edb <- EnsDb.Hsapiens.v86
+```
+
+```{r}
+#truncating gene id to pull the gene length
+length.gene<- lengthOf(edb, filter = GeneIdFilter(tcga_prostate$X))
+
+```
+
+```{r}
+tcga_prostate_genelength<-as.data.frame(cbind(tcga_prostate, length.gene))
+```
+
+```{r}
+#write.csv(tcga_prostate, file = "Prostate_with_genelength.csv", row.names = FALSE)
+```
+
+```{r}
+# removing normal tissues
+prad1<-tcga_prostate_genelength
+
+removetissues<-names(prad1) %in% c("TCGA.HC.8265.01B.04R.2302.07","TCGA.HC.7740.01B.04R.2302.07","TCGA.HC.8258.01B.05R.2302.07")
+
+prad1<-prad1[,!removetissues]
+
+
+id_disease<-read.csv("C:/Users/u6024115/Desktop/TCGA/3methodpipes/id_and_diseasetype.csv")
+
+removetissues1<-id_disease[id_disease$primary.diagnosis!="Adenocarcinoma, NOS","id"]
+removetissues1<-str_replace_all(removetissues1,"[-]",".")
+
+removetissues2<-substr(names(prad1),1,12) %in% removetissues1
+
+prad1<-prad1[,!removetissues2] # removes 13 samples
+dim(prad1)
+#56537 genes
+```
+
+```{r}
+rwz<-(rowSums(prad1[,2:483]==0)/482)*100
+#table(rwz)
+
+prad2<-cbind(prad1, rwz)
+
+#remove genes with greater than 90 percent 0 counts - 15787 genes removed
+prad2<-prad2[!(prad2$rwz>=90),]
+dim(prad2)
+#40750 genes -
+
+#all genes have gene length
+```
+
+```{r}
+rwz10<-(rowSums(prad2[,2:483]>=100)/482)*100 #percent of samples with count >=10
+prad3<-cbind(prad2, rwz10)
+
+##### not using this remove rows (genes) where >=90 percent of samples have counts less than 5 - 16530 genes removed
+#keep rows (genes) where 95% are >=10 reads - 29418 removed
+prad4<-prad3[(prad3$rwz10>=95),] 
+dim(prad4)
+#11332 genes
+```
+
+```{r}
+fullpro<-read.csv("C:/Users/u6024115/Desktop/TCGA/genetypes.csv")
+fullprogenes<-fullpro[fullpro$Gene.type=="protein_coding",1]
+prad4.1<-prad4[prad4$X %in% fullprogenes,] #10894 total genes now
+```
+
+```{r}
+#data frame with gene length
+prad5<-prad4.1[,-c(485,486)]
+prad5<-prad5[,-c(1)]
+```
+
+```{r}
+#replacing counts with values >mean+5sd with mean+5sd
+#replacement value is cutoff value
+
+length.gene<-prad5[,483]
+prad5.1<-prad5[,-c(483)]
+
+sd<- apply(prad5.1,1,sd)
+mean<- apply(prad5.1,1,mean)
+
+prad5.11<- as.data.frame(cbind(prad5.1,sd,mean))
+
+#######QC CHECKS HH###############################S
+# qc<-sqldf('select * from [prad5.11] where sd> 5000')
+# qc$co_var<- qc$sd/qc$mean
+# qc2<-sqldf('select * from qc where co_var>1')
+# qc2[qc2> (mean + 5*sd)]<- NA
+# countna<-sapply(qc2, function(x) sum(is.na(x)))
+# summary(countna)
+# qct<-t(qc2[3,])
+# 
+# rm(qc2)
+
+#####
+
+prad5.11[prad5.11 > (mean + 5*sd)]<- NA
+countna2<-sapply(prad5.11, function(x) sum(is.na(x)))
+summary(countna2)
+countna2<-data.frame(countna2)
+# sqldf('select count(*) from countna2 where ')
+
+sum(is.na(prad5.11))
+
+mis.val<- which(is.na(prad5.11), arr.ind = TRUE)
+prad5.11[mis.val]<-  mean[mis.val[,1]] + 5*sd[mis.val[,1]]
+sum(is.na(prad5.11))
+
+prad5.11<- prad5.11[, -c(483,484)]
+
+prad5<-cbind(prad5.11, length.gene)
+```
+
+#batcheffects
+
+```{r}
+### Plate & Vial
+#text file from ubox - https://uofu.box.com/s/si86z6kcweyc70doiztvov5ctykyql08
+
+ManifestIds<-read.table("C:/Users/u6024115/Desktop/TCGA/manifest_with_idsPRAD.txt", header=T)
+manids<-ManifestIds
+manids$tsource<-substr(manids$X2, 6,7)
+manids$sample<-substr(manids$X2, 14,15)
+manids$portion<-substr(manids$X2, 18,20)
+manids$vial<-substr(manids$X2, 16,16)
+manids$plate<-substr(manids$X2, 22,25)
+
+manids$sample<-as.factor(manids$sample)
+manids$portion<-as.factor(manids$portion)
+manids$vial<-as.factor(manids$vial)
+manids$plate<-as.factor(manids$plate)
+
+#normal tissue removed
+manids2<-manids[!(manids$sample=='11'),]
+
+#metastatic tissue removed
+manids3<-manids2[!(manids2$sample=='06'),]
+
+```
+
+```{r}
+####shipment date
+#from Ubox - https://uofu.box.com/s/z6vayovndywkugfy1bk95peh1lz1cfjk
+mdanderson<-read.table('C:/Users/u6024115/Desktop/TCGA/BatchData.tsv', sep='\t', header=T)
+```
+
+```{r}
+# #####Analysis Created date
+#file from ubox - https://uofu.box.com/s/9tkflcja3db1rjz52szuqsm07ovq0ug3
+
+TCGA_PRAD1<- fromJSON("C:/Users/u6024115/Desktop/TCGA/metadata.cart.2019-03-24_PRAD_Count.json", simplifyDataFrame = TRUE)
+
+ids<-data.frame(t(c(TCGA_PRAD1$file_name[1],TCGA_PRAD1$associated_entities[[1]]$entity_submitter_id, TCGA_PRAD1$analysis[[3]][1])))
+
+for(i in 2:551){
+  ids<-rbind(ids,data.frame(t(c(TCGA_PRAD1$file_name[i],TCGA_PRAD1$associated_entities[[i]]$entity_submitter_id, TCGA_PRAD1$analysis[[3]][i]))))
+}
+```
+
+```{r}
+#all days are in May
+colnames(ids)<-c('file_name', 'entity_submitter_id', 'analysis.created.datetime')
+```
+
+```{r}
+# extracting analysis created date
+day<-substr(ids$analysis.created.datetime, 1,10)
+```
+
+```{r}
+# combining the case ids and date
+creat_date<- as.data.frame(cbind(ids,day))
+```
+
+```{r}
+#getting ID for data
+batchvar<-sqldf('select X2, tsource, vial, plate, ShipDate, day
+      from manids3
+      join mdanderson
+      on manids3.X2 = mdanderson.Sample
+      join creat_date
+      on manids3.X2 = creat_date.entity_submitter_id')
+```
+
+```{r}
+
+#removing samples as decided based on first pca plots
+
+batchvar11<-batchvar[!batchvar$X2=="TCGA-HC-7740-01B-04R-2302-07",]
+batchvar12<-batchvar11[!batchvar11$X2=="TCGA-HC-8265-01B-04R-2302-07",]
+batchvar13<-batchvar12[!batchvar12$X2=="TCGA-HC-8258-01B-05R-2302-07",]
+
+batchvar<-batchvar13
+
+#variable for batch effects
+batchvar<-batchvar[order(batchvar$X2),]
+
+vial<-as.character(batchvar$vial)
+plate<-as.character(batchvar$plate)
+shipdate<-as.character(batchvar$ShipDate)
+shipyear<-as.character(substr(batchvar$ShipDate,1,4))
+CreateDate<-as.character(batchvar$day)
+TSS<-as.character(batchvar$tsource)
+```
+
+#end batch var
+
+```{r}
+cprad5<-as.data.frame(cbind(colnames(prad5.11),as.character("a")))
+colnames(cprad5)<-c("X3","plate")
+cprad5$plate<-as.character(cprad5$plate)
+cprad5$X3<-as.character(cprad5$X3)
+cprad5$X3<-str_replace_all(cprad5$X3,"[.]","-")
+
+for (i in 1:482) {
+  (a<-batchvar$X2==cprad5$X3[i]) 
+cprad5$plate[i]<-as.character(batchvar$plate[a])
+
+}
+```
+
+```{r}
+#normalizing data by gene length RPK
+prad6<- prad5.11/prad5$length.gene
+```
+
+```{r}
+#applying geTMM
+dge.list<- DGEList(counts = prad6)
+tmm<- calcNormFactors(dge.list, method = "TMM")
+tmmScaleFactor <- tmm$samples
+
+prad7<-cpm(tmm)
+```
+
+
+```{r}
+source("C:/Users/u6024115/Desktop/TCGA/combatwang.r")
+combataedata<-ComBatWrapper(prad7, cprad5$plate, modcombat = NULL, Iteration) #10890 genes removes 4 genes
+```
+
+```{r}
+sampsums<-colSums(combataedata)
+
+min(combataedata)
+sum(combataedata<0)
+
+summary(sampsums)
+```
+
+```{r}
+library(factoextra)
+library(data.table)
+library(sparsepca)
+
+spca1<-spca(t(combataedata), k=30)
+
+sloadings<-as.data.frame(spca1$loadings)
+row.names(sloadings)<-row.names(combataedata)
+
+sloadings1<-as.data.frame(sloadings[sloadings$V1 != 0,])
+sloadings1<-cbind(row.names(sloadings1),sloadings1[,1])
+
+sloadings2<-(sloadings[sloadings$V2 != 0,])
+sloadings2<-cbind(row.names(sloadings2),sloadings2[,2])
+
+sloadings3<-(sloadings[sloadings$V3 != 0,])
+sloadings3<-cbind(row.names(sloadings3),sloadings3[,3])
+
+
+
+
+pca1<- prcomp(t(combataedata), retx = T, center = T, scale = F)
+pscore<-as.data.frame(abs(pca1$rotation %*% pca1$sdev))
+colnames(pscore) <- c("abs_score")
+
+
+
+pgene<- rownames(pscore)
+pgenescore<- as.data.frame(cbind(pgene,pscore))
+
+
+setorder(pgenescore,-abs_score)
+setorder(pscore,-abs_score)
+```
+
+
+```{r}
+source("C:/Users/u6024115/Desktop/TCGA/findElbow.r")
+gene_elbow(sort(pgenescore$abs_score,decreasing = T),"PCA")
+```
+
+```{r}
+filter <- pscore[781,]
+tg1<-(subset(pgenescore,pgenescore$abs_score >= filter)) #FOR SOME REASON THIS DOESN'T WORK TO SUBSET FOR PRAD8
+tg2<-pgenescore$abs_score >= filter
+```
+
+```{r}
+## Subset data to expression for top genes only
+prad8<- combataedata[tg2,]
+#write.csv(rownames(prad8), "combat_elbow_genes100.csv")
+```
+
+```{r}
+pca2<- prcomp(t(prad8), retx = T, center = T, scale = F)
+pscore2<-as.data.frame(abs(pca2$rotation %*% pca2$sdev))
+colnames(pscore2) <- c("abs_score")
+
+
+pgene2<- rownames(pscore2)
+pgenescore2<- as.data.frame(cbind(pgene2,pscore2))
+
+
+setorder(pgenescore2,-abs_score)
+setorder(pscore2,-abs_score)
+
+x.var <- pca2$sdev ^ 2
+x.pvar <- x.var/sum(x.var)
+
+```
+
+
+
+```{r}
+source("C:/Users/u6024115/Desktop/TCGA/findElbow.r")
+gene_elbow(sort(x.pvar,decreasing = T),"PCA")
+#19 PCs according to elbow test
+```
+
+
+```{r}
+pcaCharts <- function(x) {
+    x.var <- x$sdev ^ 2
+    x.pvar <- x.var/sum(x.var)
+    print("proportions of variance:")
+   print(x.pvar[1:25])
+    
+    par(mfrow=c(2,2))
+    plot(x.pvar,xlab="Principal component", ylab="Proportion of variance explained", ylim=c(0,1), xlim = c(0,100) ,type='b')
+    plot(cumsum(x.pvar),xlab="Principal component", ylab="Cumulative Proportion of variance explained", ylim=c(0,1), xlim = c(0,100), type='b')
+    screeplot(x)
+    screeplot(x,type="l")
+    par(mfrow=c(1,1))
+}
+pcplot<-pcaCharts(pca2)
+
+```
+
+```{r}
+pca2x<-as.data.frame(pca2$x)
+test<-cbind(pca2x, cprad5)
+ggplot(data=test, mapping = aes(PC1, PC2, color=plate))+geom_point()
+
+```
+
+```{r}
+
+corbatch1<-aov(PC1 ~ test$plate, data=test)
+corbatch2<-aov(PC2 ~ test$plate, data=test)
+corbatch3<-aov(PC3 ~ test$plate, data=test)
+corbatch4<-aov(PC4 ~ test$plate, data=test)
+corbatch5<-aov(PC5 ~ test$plate, data=test)
+corbatch6<-aov(PC6 ~ test$plate, data=test)
+corbatch7<-aov(PC7 ~ test$plate, data=test)
+corbatch8<-aov(PC8 ~ test$plate, data=test)
+corbatch9<-aov(PC9 ~ test$plate, data=test)
+corbatch10<-aov(PC10 ~ test$plate, data=test)
+corbatch11<-aov(PC11 ~ test$plate, data=test)
+corbatch12<-aov(PC12 ~ test$plate, data=test)
+corbatch13<-aov(PC13 ~ test$plate, data=test)
+corbatch14<-aov(PC14 ~ test$plate, data=test)
+corbatch15<-aov(PC15 ~ test$plate, data=test)
+corbatch16<-aov(PC16 ~ test$plate, data=test)
+corbatch17<-aov(PC17 ~ test$plate, data=test)
+
+
+summary(corbatch1)
+summary(corbatch2)
+summary(corbatch3)
+summary(corbatch4)
+summary(corbatch5)
+summary(corbatch6)
+summary(corbatch7)
+summary(corbatch8)
+summary(corbatch9)
+summary(corbatch10)
+summary(corbatch11)
+summary(corbatch12)
+summary(corbatch13)
+summary(corbatch14)
+summary(corbatch15)
+summary(corbatch16)
+summary(corbatch17)
+
+# removed any correlation with plate
+```
+
+```{r}
+eig.val<-get_eigenvalue(pca2)
+pcaloading2<-pca2$rotation[,1:19]
+pcaindv<-data.frame(pca2$x[,1:19])
+TCGAids<-rownames(pcaindv)
+rownames(pcaindv)<-NULL
+pcaindv<-cbind(TCGAids,pcaindv)
+pcaindv$TCGAids<-as.character(pcaindv$TCGAids)
+pcaindv$TCGAids<-str_replace_all(pcaindv$TCGAids,"[.]","-")
+
+pcaindv2<-pcaindv
+rownames(pcaindv2)<-pcaindv2$TCGAids
+pcaindv2<-pcaindv2[,-1]
+
+pcaindv<-sqldf('select p.*, b.*
+      from pcaindv as p
+      join batchvar as b
+      on TCGAids = b.x2')
+
+
+#note- still using 19 PCs based on elbow plot of prop var
+```
+
+```{r}
+#read demographic and diagnosis data
+demodata<-read.csv("C:/Users/u6024115/Desktop/TCGA/clinicaldata/demographic_data_prad.csv")
+dxdata<-read.csv("C:/Users/u6024115/Desktop/TCGA/clinicaldata/diagnosis_data_prad.csv")
+```
+
+```{r}
+#combind demo and dx data to rna data
+pcaindv$id<-substr(pcaindv$TCGAids,1,12)
+
+pcaindv3<-merge(pcaindv, demodata, by= "id", all.x=T)
+
+pcaindv4<-merge(pcaindv3, dxdata, by="id", all.x=T)
+
+```
+
+```{r}
+#create risk categories based on gleason
+
+pcaindv4$risk<-"something"
+for (i in 1:nrow(pcaindv4)) {
+  if (pcaindv4$primary.gleason.grade[i]=="Pattern 5" | pcaindv4$secondary.gleason.grade[i]=="Pattern 5") {pcaindv4$risk[i]<-"high"}
+  else if (pcaindv4$primary.gleason.grade[i]=="Pattern 4" & pcaindv4$secondary.gleason.grade[i]=="Pattern 4") {pcaindv4$risk[i]<-"high"}
+  else if (pcaindv4$primary.gleason.grade[i]=="Pattern 3" & pcaindv4$secondary.gleason.grade[i]=="Pattern 4") {pcaindv4$risk[i]<-"moderate"}
+  else if (pcaindv4$primary.gleason.grade[i]=="Pattern 4" & pcaindv4$secondary.gleason.grade[i]=="Pattern 3") {pcaindv4$risk[i]<-"moderate"}
+  else {pcaindv4$risk[i]<-"low"}
+}
+
+# table(pcaindv4$risk)
+#204 high
+#246 moderate
+#45 low
+
+
+
+```
+
+```{r}
+#create binary age at diagnosis <55 y/n
+
+pcaindv4$youngold[pcaindv4$age.at.index<55]<-"young"
+pcaindv4$youngold[pcaindv4$age.at.index>=55]<-"old"
+
+# table(pcaindv4$youngold)
+#410 old
+#85 young
+```
+
+```{r}
+ggplot(data=pcaindv4, mapping = aes(PC1, PC2, color=risk))+geom_point(alpha=.5)
+ggplot(data=pcaindv4, mapping = aes(PC1, PC2, color=youngold))+geom_point(alpha=.5)
+
+
+pcaindv4young<-pcaindv4[pcaindv4$youngold=="young",]
+pcaindv4old<-pcaindv4[pcaindv4$youngold=="old",]
+
+ggplot(data=pcaindv4young, mapping = aes(PC1, PC2, color=risk))+geom_point(alpha=.5)
+ggplot(data=pcaindv4old, mapping = aes(PC1, PC2, color=risk))+geom_point(alpha=.5)
+
+```
+
+```{r}
+
+corbatch1<-aov(PC1 ~ pcaindv4$risk, data=pcaindv4)
+corbatch2<-aov(PC2 ~ pcaindv4$risk, data=pcaindv4)
+corbatch3<-aov(PC3 ~ pcaindv4$risk, data=pcaindv4)
+corbatch4<-aov(PC4 ~ pcaindv4$risk, data=pcaindv4)
+corbatch5<-aov(PC5 ~ pcaindv4$risk, data=pcaindv4)
+corbatch6<-aov(PC6 ~ pcaindv4$risk, data=pcaindv4)
+corbatch7<-aov(PC7 ~ pcaindv4$risk, data=pcaindv4)
+corbatch8<-aov(PC8 ~ pcaindv4$risk, data=pcaindv4)
+corbatch9<-aov(PC9 ~ pcaindv4$risk, data=pcaindv4)
+corbatch10<-aov(PC10 ~ pcaindv4$risk, data=pcaindv4)
+corbatch11<-aov(PC11 ~ pcaindv4$risk, data=pcaindv4)
+corbatch12<-aov(PC12 ~ pcaindv4$risk, data=pcaindv4)
+corbatch13<-aov(PC13 ~ pcaindv4$risk, data=pcaindv4)
+corbatch14<-aov(PC14 ~ pcaindv4$risk, data=pcaindv4)
+corbatch15<-aov(PC15 ~ pcaindv4$risk, data=pcaindv4)
+corbatch16<-aov(PC16 ~ pcaindv4$risk, data=pcaindv4)
+corbatch17<-aov(PC17 ~ pcaindv4$risk, data=pcaindv4)
+
+
+summary(corbatch1)
+summary(corbatch2)
+summary(corbatch3)
+summary(corbatch4)
+summary(corbatch5)
+summary(corbatch6)
+summary(corbatch7)
+summary(corbatch8)
+summary(corbatch9)
+summary(corbatch10)
+summary(corbatch11)
+summary(corbatch12)
+summary(corbatch13)
+summary(corbatch14)
+summary(corbatch15)
+summary(corbatch16)
+summary(corbatch17)
+
+# 2,3,4,5,7,11
+```
+
+```{r}
+ggplot(data=pcaindv4young, mapping = aes(PC1, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4young, mapping = aes(PC2, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4young, mapping = aes(PC3, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4young, mapping = aes(PC4, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4young, mapping = aes(PC5, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4young, mapping = aes(PC6, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4young, mapping = aes(PC7, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4young, mapping = aes(PC8, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4young, mapping = aes(PC9, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4young, mapping = aes(PC10, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4young, mapping = aes(PC11, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4young, mapping = aes(PC12, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4young, mapping = aes(PC13, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4young, mapping = aes(PC14, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4young, mapping = aes(PC15, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4young, mapping = aes(PC16, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4young, mapping = aes(PC17, fill=risk))+geom_density(alpha=.2)
+
+ggplot(data=pcaindv4old, mapping = aes(PC1, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4old, mapping = aes(PC2, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4old, mapping = aes(PC3, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4old, mapping = aes(PC4, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4old, mapping = aes(PC5, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4old, mapping = aes(PC6, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4old, mapping = aes(PC7, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4old, mapping = aes(PC8, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4old, mapping = aes(PC9, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4old, mapping = aes(PC10, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4old, mapping = aes(PC11, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4old, mapping = aes(PC12, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4old, mapping = aes(PC13, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4old, mapping = aes(PC14, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4old, mapping = aes(PC15, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4old, mapping = aes(PC16, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4old, mapping = aes(PC17, fill=risk))+geom_density(alpha=.2)
+
+```
+
+```{r}
+ggplot(data=pcaindv4, mapping = aes(PC1, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC2, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC3, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC4, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC5, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC6, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC7, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC8, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC9, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC10, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC11, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC12, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC13, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC14, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC15, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC16, fill=risk))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC17, fill=risk))+geom_density(alpha=.2)
+```
+
+```{r}
+
+corbatch1<-aov(PC1 ~ pcaindv4$youngold, data=pcaindv4)
+corbatch2<-aov(PC2 ~ pcaindv4$youngold, data=pcaindv4)
+corbatch3<-aov(PC3 ~ pcaindv4$youngold, data=pcaindv4)
+corbatch4<-aov(PC4 ~ pcaindv4$youngold, data=pcaindv4)
+corbatch5<-aov(PC5 ~ pcaindv4$youngold, data=pcaindv4)
+corbatch6<-aov(PC6 ~ pcaindv4$youngold, data=pcaindv4)
+corbatch7<-aov(PC7 ~ pcaindv4$youngold, data=pcaindv4)
+corbatch8<-aov(PC8 ~ pcaindv4$youngold, data=pcaindv4)
+corbatch9<-aov(PC9 ~ pcaindv4$youngold, data=pcaindv4)
+corbatch10<-aov(PC10 ~ pcaindv4$youngold, data=pcaindv4)
+corbatch11<-aov(PC11 ~ pcaindv4$youngold, data=pcaindv4)
+corbatch12<-aov(PC12 ~ pcaindv4$youngold, data=pcaindv4)
+corbatch13<-aov(PC13 ~ pcaindv4$youngold, data=pcaindv4)
+corbatch14<-aov(PC14 ~ pcaindv4$youngold, data=pcaindv4)
+corbatch15<-aov(PC15 ~ pcaindv4$youngold, data=pcaindv4)
+corbatch16<-aov(PC16 ~ pcaindv4$youngold, data=pcaindv4)
+corbatch17<-aov(PC17 ~ pcaindv4$youngold, data=pcaindv4)
+
+
+summary(corbatch1)
+summary(corbatch2)
+summary(corbatch3)
+summary(corbatch4)
+summary(corbatch5)
+summary(corbatch6)
+summary(corbatch7)
+summary(corbatch8)
+summary(corbatch9)
+summary(corbatch10)
+summary(corbatch11)
+summary(corbatch12)
+summary(corbatch13)
+summary(corbatch14)
+summary(corbatch15)
+summary(corbatch16)
+summary(corbatch17)
+
+# 2,3,12
+```
+
+```{r}
+ggplot(data=pcaindv4, mapping = aes(PC1, fill=youngold))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC2, fill=youngold))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC3, fill=youngold))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC4, fill=youngold))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC5, fill=youngold))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC6, fill=youngold))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC7, fill=youngold))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC8, fill=youngold))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC9, fill=youngold))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC10, fill=youngold))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC11, fill=youngold))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC12, fill=youngold))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC13, fill=youngold))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC14, fill=youngold))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC15, fill=youngold))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC16, fill=youngold))+geom_density(alpha=.2)
+ggplot(data=pcaindv4, mapping = aes(PC17, fill=youngold))+geom_density(alpha=.2)
+```
+
+```{r}
+
+cell<-read.csv('C:/Users/u6024115/Desktop/TCGA/TCGA_Prostate_CellData_2015.csv')
+pcaindv4$cellid<-substr(pcaindv4$TCGAids,1,15)
+pcaindv5<-sqldf('select * from pcaindv4 as p 
+                  join cell as c
+                  on p.cellid=c.SAMPLE_ID')
+
+summary(pcaindv5$Subtype)
+ERG<-pcaindv5[which(pcaindv5$Subtype=='1-ERG'),]
+ETV1<-pcaindv5[which(pcaindv5$Subtype=='2-ETV1'),]
+ETV4<-pcaindv5[which(pcaindv5$Subtype=='3-ETV4'),]
+FLI1<-pcaindv5[which(pcaindv5$Subtype=='4-FLI1'),]
+SPOP<-pcaindv5[which(pcaindv5$Subtype=='5-SPOP'),]
+FOXA1<-pcaindv5[which(pcaindv5$Subtype=='6-FOXA1'),]
+IDH1<-pcaindv5[which(pcaindv5$Subtype=='7-IDH1'),]
+other<-pcaindv5[which(pcaindv5$Subtype=='8-other'),]
+
+# #jpeg(s1.jpg, width = 500, height = 350)
+# ggplot(pcaindv5, aes(x=pcaindv5$PC1)) +
+#   geom_histogram(binwidth=0.005, color="grey30", fill="blue") + facet_grid(pcaindv5$Subtype)
+# 
+# ggplot(pcaindv5, aes(x=pcaindv5$PC2)) +
+#   geom_histogram(binwidth=0.005, color="grey30", fill="blue") + facet_grid(pcaindv5$Subtype)
+# 
+# ggplot(pcaindv5, aes(x=pcaindv5$PC3)) +
+#   geom_histogram(binwidth=0.005, color="grey30", fill="blue") + facet_grid(pcaindv5$Subtype)
+# 
+# ggplot(pcaindv5, aes(x=pcaindv5$PC4)) +
+#   geom_histogram(binwidth=0.005, color="grey30", fill="blue") + facet_grid(pcaindv5$Subtype)
+# 
+# ggplot(pcaindv5, aes(x=pcaindv5$PC5)) +
+#   geom_histogram(binwidth=0.005, color="grey30", fill="blue") + facet_grid(pcaindv5$Subtype)
+# 
+# ggplot(pcaindv5, aes(x=pcaindv5$PC6)) +
+#   geom_histogram(binwidth=0.005, color="grey30", fill="blue") + facet_grid(pcaindv5$Subtype)
+# 
+# ggplot(pcaindv5, aes(x=pcaindv5$PC7)) +
+#   geom_histogram(binwidth=0.005, color="grey30", fill="blue") + facet_grid(pcaindv5$Subtype)
+# 
+# ggplot(pcaindv5, aes(x=pcaindv5$PC8)) +
+#   geom_histogram(binwidth=0.005, color="grey30", fill="blue") + facet_grid(pcaindv5$Subtype)
+# 
+# ggplot(pcaindv5, aes(x=pcaindv5$PC9)) +
+#   geom_histogram(binwidth=0.005, color="grey30", fill="blue") + facet_grid(pcaindv5$Subtype)
+# 
+# # histogram(data=svdindv2, xName='PCA1', groupName='Subtype', legentPosition=tp)
+```
+
+```{r}
+ggplot(data=pcaindv5, mapping = aes(PC1, PC2, color=Subtype))+geom_point()
+```
+
+```{r}
+
+corbatch1<-aov(PC1 ~ pcaindv5$Subtype, data=pcaindv5)
+corbatch2<-aov(PC2 ~ pcaindv5$Subtype, data=pcaindv5)
+corbatch3<-aov(PC3 ~ pcaindv5$Subtype, data=pcaindv5)
+corbatch4<-aov(PC4 ~ pcaindv5$Subtype, data=pcaindv5)
+corbatch5<-aov(PC5 ~ pcaindv5$Subtype, data=pcaindv5)
+corbatch6<-aov(PC6 ~ pcaindv5$Subtype, data=pcaindv5)
+corbatch7<-aov(PC7 ~ pcaindv5$Subtype, data=pcaindv5)
+corbatch8<-aov(PC8 ~ pcaindv5$Subtype, data=pcaindv5)
+corbatch9<-aov(PC9 ~ pcaindv5$Subtype, data=pcaindv5)
+corbatch10<-aov(PC10 ~ pcaindv5$Subtype, data=pcaindv5)
+corbatch11<-aov(PC11 ~ pcaindv5$Subtype, data=pcaindv5)
+corbatch12<-aov(PC12 ~ pcaindv5$Subtype, data=pcaindv5)
+corbatch13<-aov(PC13 ~ pcaindv5$Subtype, data=pcaindv5)
+corbatch14<-aov(PC14 ~ pcaindv5$Subtype, data=pcaindv5)
+corbatch15<-aov(PC15 ~ pcaindv5$Subtype, data=pcaindv5)
+corbatch16<-aov(PC16 ~ pcaindv5$Subtype, data=pcaindv5)
+corbatch17<-aov(PC17 ~ pcaindv5$Subtype, data=pcaindv5)
+
+
+summary(corbatch1)
+summary(corbatch2)
+summary(corbatch3)
+summary(corbatch4)
+summary(corbatch5)
+summary(corbatch6)
+summary(corbatch7)
+summary(corbatch8)
+summary(corbatch9)
+summary(corbatch10)
+summary(corbatch11)
+summary(corbatch12)
+summary(corbatch13)
+summary(corbatch14)
+summary(corbatch15)
+summary(corbatch16)
+summary(corbatch17)
+
+# 2,3,4,5,7,8,10,12,13,14,15
+```
+
+```{r}
+table(pcaindv5$Subtype)
+```
+
+```{r}
+ggplot(data=pcaindv5, mapping = aes(PC1, fill=Subtype))+geom_density(alpha=.2)
+ggplot(data=pcaindv5, mapping = aes(PC2, fill=Subtype))+geom_density(alpha=.2)
+ggplot(data=pcaindv5, mapping = aes(PC3, fill=Subtype))+geom_density(alpha=.2)
+ggplot(data=pcaindv5, mapping = aes(PC4, fill=Subtype))+geom_density(alpha=.2)
+ggplot(data=pcaindv5, mapping = aes(PC5, fill=Subtype))+geom_density(alpha=.2)
+ggplot(data=pcaindv5, mapping = aes(PC6, fill=Subtype))+geom_density(alpha=.2)
+ggplot(data=pcaindv5, mapping = aes(PC7, fill=Subtype))+geom_density(alpha=.2)
+ggplot(data=pcaindv5, mapping = aes(PC8, fill=Subtype))+geom_density(alpha=.2)
+ggplot(data=pcaindv5, mapping = aes(PC9, fill=Subtype))+geom_density(alpha=.2)
+ggplot(data=pcaindv5, mapping = aes(PC10, fill=Subtype))+geom_density(alpha=.2)
+ggplot(data=pcaindv5, mapping = aes(PC11, fill=Subtype))+geom_density(alpha=.2)
+ggplot(data=pcaindv5, mapping = aes(PC12, fill=Subtype))+geom_density(alpha=.2)
+ggplot(data=pcaindv5, mapping = aes(PC13, fill=Subtype))+geom_density(alpha=.2)
+ggplot(data=pcaindv5, mapping = aes(PC14, fill=Subtype))+geom_density(alpha=.2)
+ggplot(data=pcaindv5, mapping = aes(PC15, fill=Subtype))+geom_density(alpha=.2)
+ggplot(data=pcaindv5, mapping = aes(PC16, fill=Subtype))+geom_density(alpha=.2)
+ggplot(data=pcaindv5, mapping = aes(PC17, fill=Subtype))+geom_density(alpha=.2)
+```
