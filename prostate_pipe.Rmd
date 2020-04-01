@@ -1273,13 +1273,23 @@ summary(pathex.t.m)
 
 
 
-## singularity issue
-# pathexint.t.d<-pcaindv4[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","PC20","PC21","racerecode","age_centered","ajcc.path.t.recode")]
-# 
-# pathexint.t.d2<-mlogit.data(pathexint.t.d, varying = NULL, choice = "ajcc.path.t.recode",shape = "wide")
-# 
-# pathexint.t.m<-mlogit(ajcc.path.t.recode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20 +PC21 + racerecode + age_centered + (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20 +PC21) * (racerecode + age_centered), data=pathexint.t.d2, reflevel = 1)
-# summary(pathexint.t.m)
+## singularity issue - solved by rolling levels together for better cell size, removing "other" race, not using age in model
+pcaindv4r<- pcaindv4[!(pcaindv4$racerecode=="other"),]
+pcaindv4r$ajcc.t.rollup[pcaindv4r$ajcc.pathologic.t=="T2a"]<-1
+pcaindv4r$ajcc.t.rollup[pcaindv4r$ajcc.pathologic.t=="T2b"]<-1
+pcaindv4r$ajcc.t.rollup[pcaindv4r$ajcc.pathologic.t=="T2c"]<-1
+pcaindv4r$ajcc.t.rollup[pcaindv4r$ajcc.pathologic.t=="T3a"]<-2
+pcaindv4r$ajcc.t.rollup[pcaindv4r$ajcc.pathologic.t=="T3b"]<-3
+pcaindv4r$ajcc.t.rollup[pcaindv4r$ajcc.pathologic.t=="T4"]<-3
+sum(is.na(pcaindv4r$ajcc.t.rollup))
+pcaindv4r<-droplevels(pcaindv4r)
+
+pathexint.t.d<-pcaindv4r[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","PC20","PC21","racerecode","age_centered","ajcc.t.rollup")]
+
+pathexint.t.d2<-mlogit.data(pathexint.t.d, varying = NULL, choice = "ajcc.t.rollup",shape = "wide")
+
+pathexint.t.m<-mlogit(ajcc.t.rollup ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20 +PC21 + racerecode + (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20 +PC21) * (racerecode), data=pathexint.t.d2, reflevel = 1)
+summary(pathexint.t.m)
 
 ```
 
@@ -1408,7 +1418,7 @@ summary(pcaindv5$AR_score)
 #check correlations
 print("age")
 for (i in 1:21) {
-  print(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$agedx, data=pcaindv5)))
+  print(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$age_centered, data=pcaindv5)))
 }
 print("")
 print("")
@@ -1421,9 +1431,9 @@ print("")
 print("")
 print("")
 print("age and subtype")
-  chisq.test(pcaindv5$agedx, pcaindv5$Subtype)
+  chisq.test(pcaindv5$age_centered, pcaindv5$Subtype, simulate.p.value = T)
 print("race and subtype")
-  chisq.test(pcaindv5$race, pcaindv5$Subtype)
+  chisq.test(pcaindv5$race, pcaindv5$Subtype, simulate.p.value = T)
 
 
 print("")
@@ -1455,11 +1465,15 @@ gleasonsubex.m<-mlogit(riskrecode ~ 1 | Subtype + racerecode + age_centered, dat
 summary(gleasonsubex.m)
 
 ##singularity issue
-# #subtypeexpanded interaction
-# gleasonsubexint.d<-pcaindv5[,c("Subtype","riskrecode","racerecode","age_centered")]
-# gleasonsubexint.d2<-mlogit.data(gleasonsubexint.d, varying = NULL, choice = "riskrecode",shape = "wide")
-# gleasonsubexint.m<-mlogit(riskrecode ~ 1 | Subtype + racerecode + age_centered + Subtype*(racerecode + age_centered), data=gleasonsubexint.d2, reflevel = 1)
-# summary(gleasonsubexint.m)
+#subtypeexpanded interaction - solved by removing "other" race due to no "other" race samples being in certain subtypes
+
+pcaindv5r<-pcaindv5[!(pcaindv5$racerecode=="other"),]
+pcaindv5r<-droplevels(pcaindv5r)
+
+gleasonsubexint.d<-pcaindv5r[,c("Subtype","riskrecode","racerecode","age_centered")]
+gleasonsubexint.d2<-mlogit.data(gleasonsubexint.d, varying = NULL, choice = "riskrecode",shape = "wide")
+gleasonsubexint.m<-mlogit(riskrecode ~ 1 | Subtype + racerecode + age_centered + Subtype*(racerecode + age_centered), data=gleasonsubexint.d2, reflevel = 1)
+summary(gleasonsubexint.m)
 
 #=============================================#
 
@@ -1474,17 +1488,19 @@ gleasonpc.cm<-mlogit(riskrecode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ 
 summary(gleasonpc.cm)
 
 
-##singularity issues
-# gleasonpcexint.cd<-pcaindv5[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","PC20","PC21","riskrecode","racerecode","age_centered")]
-# 
-# gleasonpcexint.cd2<-mlogit.data(gleasonpcexint.cd, varying = NULL, choice = "riskrecode",shape = "wide")
-# 
-# gleasonpcexint.cm<-mlogit(riskrecode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20+PC21+racerecode + age_centered + (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20+PC21) * (racerecode + age_centered), data=gleasonpcexint.cd2, reflevel = 1)
-# summary(gleasonpcexint.cm)
+##singularity issues - solved by removing samples with "other" race and removing age variable
+
+gleasonpcexint.cd<-pcaindv5r[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","PC20","PC21","riskrecode","racerecode","age_centered")]
+
+gleasonpcexint.cd2<-mlogit.data(gleasonpcexint.cd, varying = NULL, choice = "riskrecode",shape = "wide")
+
+gleasonpcexint.cm<-mlogit(riskrecode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20+PC21+racerecode +  (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20+PC21) * (racerecode), data=gleasonpcexint.cd2, reflevel = 1)
+summary(gleasonpcexint.cm)
 ```
 
 ```{r}
 #model outcome=ajcc.path.n
+#icluster
 pcaindv5$mRNA_cluster<-as.factor(pcaindv5$mRNA_cluster)
 pcaindv5$iCluster<-as.factor(pcaindv5$iCluster)
 
@@ -1494,29 +1510,50 @@ summary(ajcc.n.m_iclust)
 ajcc.n.m_iclustex<-glm(ajcc.n.recode ~ iCluster + racerecode + age_centered, family="binomial", data = pcaindv5)
 summary(ajcc.n.m_iclustex)
 
+ajcc.n.m_iclustexint<-glm(ajcc.n.recode ~ iCluster + racerecode + age_centered+ iCluster * (racerecode + age_centered), family="binomial", data = pcaindv5)
+summary(ajcc.n.m_iclustexint)
+
+#mRNA cluster
 ajcc.n.mrna<-glm(ajcc.n.recode ~ mRNA_cluster, family="binomial",data=pcaindv5)
 summary(ajcc.n.mrna)
 
 ajcc.n.mrnaex<-glm(ajcc.n.recode ~ mRNA_cluster + racerecode + age_centered, family="binomial",data=pcaindv5)
 summary(ajcc.n.mrnaex)
 
+ajcc.n.mrnaexint<-glm(ajcc.n.recode ~ mRNA_cluster + racerecode + age_centered + mRNA_cluster * (racerecode + age_centered), family="binomial",data=pcaindv5)
+summary(ajcc.n.mrnaexint)
+
+#subtype
 ajcc.n.sub<-glm(ajcc.n.recode ~ Subtype, family="binomial",data = pcaindv5)
 summary(ajcc.n.sub)
 
 ajcc.n.subex<-glm(ajcc.n.recode ~ Subtype + racerecode + age_centered, family="binomial",data = pcaindv5)
 summary(ajcc.n.subex)
 
+
+ajcc.n.subexint<-glm(ajcc.n.recode ~ Subtype + racerecode + age_centered + Subtype * (racerecode + age_centered), family="binomial",data = pcaindv5)
+#may need to remove "other" race?
+summary(ajcc.n.subexint)
+
+#PC
 ajcc.n.pc<-glm(ajcc.n.recode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20+PC21, family = "binomial", data=pcaindv5)
 summary(ajcc.n.pc)
 
 ajcc.n.pcex<-glm(ajcc.n.recode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20+PC21+ racerecode +age_centered, family = "binomial", data=pcaindv5)
 summary(ajcc.n.pcex)
 
+#issues here- looks like we need to remove "other" race samples
+ajcc.n.pcexint<-glm(ajcc.n.recode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20+PC21+ racerecode +age_centered + (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20+PC21) * (racerecode +age_centered), family = "binomial", data=pcaindv5)
+summary(ajcc.n.pcexint)
+
 
 ```
 
 ```{r}
 #model outcome=ajcc.path.t
+
+#icluster
+
 path.t.diclust<-pcaindv5[,c("iCluster","ajcc.path.t.recode")]
 path.t.diclust2<-mlogit.data(path.t.diclust, varying = NULL, choice = "ajcc.path.t.recode",shape = "wide")
 path.t.miclust<-mlogit(ajcc.path.t.recode ~ 1 | iCluster, data = path.t.diclust2, reflevel = 1)
@@ -1527,7 +1564,15 @@ path.t.diclustex2<-mlogit.data(path.t.diclustex, varying = NULL, choice = "ajcc.
 path.t.miclustex<-mlogit(ajcc.path.t.recode ~ 1 | iCluster + racerecode + age_centered, data = path.t.diclustex2, reflevel = 1)
 summary(path.t.miclustex)
 
+path.t.diclustexint<-pcaindv5[,c("iCluster","ajcc.path.t.recode","racerecode","age_centered")]
+path.t.diclustexint2<-mlogit.data(path.t.diclustexint, varying = NULL, choice = "ajcc.path.t.recode",shape = "wide")
+path.t.miclustexint<-mlogit(ajcc.path.t.recode ~ 1 | iCluster + racerecode + age_centered + iCluster * (racerecode + age_centered), data = path.t.diclustexint2, reflevel = 1)
+summary(path.t.miclustexint)
+
 #=======================================#
+
+#mrna cluster
+
 path.t.dmrna<-pcaindv5[,c("mRNA_cluster","ajcc.path.t.recode")]
 path.t.dmrna2<-mlogit.data(path.t.dmrna, varying = NULL, choice = "ajcc.path.t.recode",shape = "wide")
 path.t.m.mrna<-mlogit(ajcc.path.t.recode ~ 1 | mRNA_cluster, data = path.t.dmrna2, reflevel = 1)
@@ -1537,8 +1582,15 @@ path.t.dmrnaex<-pcaindv5[,c("mRNA_cluster","ajcc.path.t.recode","racerecode","ag
 path.t.dmrnaex2<-mlogit.data(path.t.dmrnaex, varying = NULL, choice = "ajcc.path.t.recode",shape = "wide")
 path.t.m.mrnaex<-mlogit(ajcc.path.t.recode ~ 1 | mRNA_cluster + racerecode + age_centered, data = path.t.dmrnaex2, reflevel = 1)
 summary(path.t.m.mrnaex)
+
+path.t.dmrnaexint<-pcaindv5[,c("mRNA_cluster","ajcc.path.t.recode","racerecode","age_centered")]
+path.t.dmrnaexint2<-mlogit.data(path.t.dmrnaexint, varying = NULL, choice = "ajcc.path.t.recode",shape = "wide")
+path.t.m.mrnaexint<-mlogit(ajcc.path.t.recode ~ 1 | mRNA_cluster + racerecode + age_centered + mRNA_cluster * (racerecode + age_centered), data = path.t.dmrnaexint2, reflevel = 1)
+summary(path.t.m.mrnaexint)
+
 #======================================#
 
+#PCs
 
 path.t.dpc<-pcaindv5[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","PC20","PC21","ajcc.path.t.recode")]
 
@@ -1555,6 +1607,22 @@ pathex.t.dpc2<-mlogit.data(pathex.t.dpc, varying = NULL, choice = "ajcc.path.t.r
 
 pathex.t.mpc<-mlogit(ajcc.path.t.recode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20+PC21 + racerecode + age_centered, data=pathex.t.dpc2, reflevel = 1)
 summary(pathex.t.mpc)
+
+#singularity issues - remove "other" race and recode ajcc.t into 3 levels with less small cells and remove age from model
+pcaindv5r$ajcc.t.rollup[pcaindv5r$ajcc.pathologic.t=="T2a"]<-1
+pcaindv5r$ajcc.t.rollup[pcaindv5r$ajcc.pathologic.t=="T2b"]<-1
+pcaindv5r$ajcc.t.rollup[pcaindv5r$ajcc.pathologic.t=="T2c"]<-1
+pcaindv5r$ajcc.t.rollup[pcaindv5r$ajcc.pathologic.t=="T3a"]<-2
+pcaindv5r$ajcc.t.rollup[pcaindv5r$ajcc.pathologic.t=="T3b"]<-3
+pcaindv5r$ajcc.t.rollup[pcaindv5r$ajcc.pathologic.t=="T4"]<-3
+sum(is.na(pcaindv5r$ajcc.t.rollup))
+pcaindv5r<-droplevels(pcaindv5r)
+pathexint.t.dpc<-pcaindv5r[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","PC20","PC21","racerecode","age_centered","ajcc.t.rollup")]
+
+pathexint.t.dpc2<-mlogit.data(pathexint.t.dpc, varying = NULL, choice = "ajcc.t.rollup",shape = "wide")
+
+pathexint.t.mpc<-mlogit(ajcc.t.rollup ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20+PC21 + racerecode  +  (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20+PC21) * (racerecode ), data=pathexint.t.dpc2, reflevel = 1)
+summary(pathexint.t.mpc)
 ```
 
 ```{r}
@@ -1636,3 +1704,78 @@ ggplot(data=pcaindv5, mapping = aes(PC19, fill=Subtype))+geom_density(alpha=.2)
 ggplot(data=pcaindv5, mapping = aes(PC20, fill=Subtype))+geom_density(alpha=.2)
 ggplot(data=pcaindv5, mapping = aes(PC21, fill=Subtype))+geom_density(alpha=.2)
 ```
+
+```{r}
+#PCs correlated with mutations
+   # ERG
+for (i in 1:21) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$ERG_status, data=pcaindv5)))
+  if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
+}
+   # ETV1
+for (i in 1:21) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$ETV1_status, data=pcaindv5)))
+  if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
+} 
+  # ETV4
+for (i in 1:21) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$ETV4_status, data=pcaindv5)))
+  if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
+} 
+  # HRAS
+for (i in 1:21) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$HRAS_mut, data=pcaindv5)))
+  if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
+} 
+  # IDH1
+for (i in 1:21) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$IDH1_mut, data=pcaindv5)))
+  if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
+} 
+  # FOXA1
+for (i in 1:21) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$FOXA1_mut, data=pcaindv5)))
+  if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
+} 
+  # BRCA1
+for (i in 1:21) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$BRCA1_mut, data=pcaindv5)))
+  if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
+} 
+  # BRCA2
+for (i in 1:21) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$BRCA2_mut, data=pcaindv5)))
+  if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
+} 
+  # BRCA1_germline
+for (i in 1:21) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$BRCA1_germline_mut, data=pcaindv5)))
+  if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
+} 
+  # BRCA2_germline
+for (i in 1:21) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$BRCA2_germline_mut, data=pcaindv5)))
+  if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
+} 
+  # TP53
+for (i in 1:21) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$TP53_mut, data=pcaindv5)))
+  if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
+} 
+  # PTEN
+for (i in 1:21) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$ERG_status, data=pcaindv5)))
+  if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
+} 
+  # BRAF
+for (i in 1:21) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$BRAF_mut, data=pcaindv5)))
+  if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
+} 
+  # SPOP
+for (i in 1:21) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$SPOP_mut, data=pcaindv5)))
+  if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
+}
+```
+
