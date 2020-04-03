@@ -127,7 +127,7 @@ prad3a$totalreads<-rowSums(prad3a[,1:10859])
 # hist(prad3a$totalreads)
 ggplot(prad3a, mapping = aes(pctg100, totalreads))+geom_point(color="darkred")
 ggplot(prad3a, mapping = aes(pctg100))+geom_histogram(fill="darkred")
-ggplot(prad3a, mapping = aes(totalreads))+geom_histogram(fill="darkred")+geom_vline(aes(xintercept=20000000), color="blue")
+ggplot(prad3a, mapping = aes(totalreads))+geom_histogram(fill="darkred")+geom_vline(aes(xintercept=10000000), color="blue")
 
 ```
 
@@ -1215,18 +1215,19 @@ summary(youngold.m)
 youngold.m2<-glm(youngoldrecode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20 +PC21+ racerecode, family = "binomial", data=pcaindv4)
 summary(youngold.m2)
 
+#issues here
 youngold.m3<-glm(youngoldrecode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20 +PC21+ racerecode + (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20 +PC21) * racerecode, family = "binomial", data=pcaindv4)
 summary(youngold.m3)
 
 #age continuous models\
-youngold.m<-lm(agedx ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20 +PC21, data=pcaindv4)
+youngold.m<-lm(age_centered ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20 +PC21, data=pcaindv4)
 summary(youngold.m)
 
-youngold.m2<-lm(agedx ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 + racerecode, data=pcaindv4)
+youngold.m2<-lm(age_centered ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 + racerecode, data=pcaindv4)
 summary(youngold.m2)
 
-youngold.m2<-lm(agedx ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 + racerecode + (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19) * racerecode, data=pcaindv4)
-summary(youngold.m2)
+youngold.m3<-lm(age_centered ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 + racerecode + (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19) * racerecode, data=pcaindv4)
+summary(youngold.m3)
 ```
 
 ```{r}
@@ -1542,7 +1543,7 @@ summary(ajcc.n.pc)
 ajcc.n.pcex<-glm(ajcc.n.recode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20+PC21+ racerecode +age_centered, family = "binomial", data=pcaindv5)
 summary(ajcc.n.pcex)
 
-#issues here- looks like we need to remove "other" race samples
+#issues here- tried to remove "other" race samples, as well as age
 ajcc.n.pcexint<-glm(ajcc.n.recode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20+PC21+ racerecode +age_centered + (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20+PC21) * (racerecode +age_centered), family = "binomial", data=pcaindv5)
 summary(ajcc.n.pcexint)
 
@@ -1608,7 +1609,8 @@ pathex.t.dpc2<-mlogit.data(pathex.t.dpc, varying = NULL, choice = "ajcc.path.t.r
 pathex.t.mpc<-mlogit(ajcc.path.t.recode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20+PC21 + racerecode + age_centered, data=pathex.t.dpc2, reflevel = 1)
 summary(pathex.t.mpc)
 
-#singularity issues - remove "other" race and recode ajcc.t into 3 levels with less small cells and remove age from model
+#singularity issues 
+#solved - remove "other" race and recode ajcc.t into 3 levels with less small cells and remove age from model
 pcaindv5r$ajcc.t.rollup[pcaindv5r$ajcc.pathologic.t=="T2a"]<-1
 pcaindv5r$ajcc.t.rollup[pcaindv5r$ajcc.pathologic.t=="T2b"]<-1
 pcaindv5r$ajcc.t.rollup[pcaindv5r$ajcc.pathologic.t=="T2c"]<-1
