@@ -1,11 +1,11 @@
 ---
-title: "sparseComBat"
+title: "Prostate TCGA Pipe"
 author: "Jacob"
-date: "2/18/2020"
+date: "4/3/2020"
 output: html_document
 ---
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 #Packages used
 
 ##if (!requireNamespace("BiocManager", quietly = TRUE))
@@ -44,7 +44,7 @@ library(ggplot2)
 library(polycor)
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 
 
 #data from 8/9/19
@@ -55,25 +55,25 @@ tcga_prostate<-read.csv("C:/Users/u6024115/Desktop/TCGA/ProstateCount_080919.csv
 
 ### getting gene length
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 edb <- EnsDb.Hsapiens.v86
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 #truncating gene id to pull the gene length
 length.gene<- lengthOf(edb, filter = GeneIdFilter(tcga_prostate$X))
 
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 tcga_prostate_genelength<-as.data.frame(cbind(tcga_prostate, length.gene))
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 #write.csv(tcga_prostate, file = "Prostate_with_genelength.csv", row.names = FALSE)
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 # removing normal tissues
 prad1<-tcga_prostate_genelength
 
@@ -91,37 +91,86 @@ removetissues1<-str_replace_all(removetissues1,"[-]",".")
 removetissues2<-substr(colnames(prad1),1,12) %in% removetissues1
 
 prad1<-prad1[,!removetissues2] # removes 13 samples
+
+removetissues3<-c("TCGA.HC-8258.01B.05R.2302.07",
+"TCGA.HC.7740.01B.04R.2302.07",
+"TCGA.HC.8265.01B.04R.2302.07")
+
+removetissues4<-colnames(prad1) %in% removetissues3
+
+prad1<-prad1[!removetissues4] #remove the 3 biological replicates
+
 dim(prad1)
 #56537 genes
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 #retrieved through ensembl website biomart tool:  http://uswest.ensembl.org/biomart/martview/1e8c2c325746fe39ee785f73d2f2f8ac
-#need to request "Gene type"
+#need to request "Gene type", "gene name", "chromosome/scaffold name"
+#this was also filtered to only include protein coding genes
 fullpro<-read.csv("C:/Users/u6024115/Desktop/TCGA/genetypes.csv")
 fullprogenes<-fullpro[fullpro$Gene.type=="protein_coding",1]
 prad1.1<-prad1[prad1$X %in% fullprogenes,] #19601 total genes now
 
-ychr<-fullpro[fullpro$Chromosome.scaffold.name != "Y",1]
-prad1.2<-prad1[prad1$X %in% ychr,]
+xychr<-fullpro[!(fullpro$Chromosome.scaffold.name %in% c("X","Y","MT", "CHR_HG1342_HG2282_PATCH")),1]
+
+prad1.2<-prad1[prad1$X %in% xychr,]
 dim(prad1.2)
 ```
 
-```{r , include=FALSE}
-rwz100<-(rowSums(prad1.2[,2:486]>=100)/485)*100 #percent of samples with count >=10
-prad2<-cbind(prad1.2, rwz100)
+```{r}
+#combine genes with same gene name
+namecheck<-fullpro[!(fullpro$Chromosome.scaffold.name %in% c("X","Y","MT", "CHR_HG1342_HG2282_PATCH")),]
 
-#keep rows (genes) where 95% are >=10 reads 
-prad3<-prad2[(prad2$rwz10>=95),] 
-dim(prad3)
-#10875 genes
+namecheck[(duplicated(namecheck$Gene.name)),"Gene.name"]
+#duplicated gene names: MATR3 PINX1 
+
+namecheck[namecheck$Gene.name=="MATR3",] 
+#ENSG00000015479 ENSG00000280987
+
+namecheck[namecheck$Gene.name=="PINX1",] 
+#ENSG00000258724 ENSG00000254093
+
+
+namecheck1<-namecheck[!(namecheck$Gene.name %in% c("MATR3","PINX1")),c(1,4)]
+
+dupnames<-namecheck[(namecheck$Gene.name %in% c("MATR3","PINX1")),c(1,4)]
 ```
 
-```{r , include=FALSE}
+```{r}
+#merge by gene name with duplicate gene names in a seperate object to combine together then put back into main data
+goodgenes<-merge(prad1.2, namecheck1, by.x="X", by.y="Gene.stable.ID")
+dupgenes<-merge(prad1.2, dupnames,by.x="X", by.y="Gene.stable.ID") #row 1 and 4, 2 and 3
+
+#how to deal with gene length??
+MATR3<-dupgenes[1,2:485]+dupgenes[4,2:485]
+MATR3<-cbind("geneid1",MATR3,"MATR3")
+colnames(MATR3)<-colnames(goodgenes)
+
+PINX1<-dupgenes[2,2:485]+dupgenes[3,2:485]
+PINX1<-cbind("geneid2",PINX1,"PINX1")
+colnames(PINX1)<-colnames(goodgenes)
+
+prad1.3<-rbind(goodgenes, MATR3, PINX1)
+```
+
+
+```{r, include=FALSE}
+rwz100<-(rowSums(prad1.3[,2:484]>=100)/483)*100 #percent of samples with count >=100
+prad2<-cbind(prad1.3, rwz100)
+
+#keep rows (genes) where 95% are >=100 reads 
+prad3<-prad2[(prad2$rwz10>=95),] 
+dim(prad3)
+#10511 genes
+rownames(prad3)<-prad3$Gene.name
+```
+
+```{r, include=FALSE}
 #create QC plots as discussed with Nikki's group
-prad3a<-as.data.frame(t(prad3[,2:486]))
-prad3a$pctg100<-rowSums(prad3a>=100)/10859
-prad3a$totalreads<-rowSums(prad3a[,1:10859])
+prad3a<-as.data.frame(t(prad3[,2:484]))
+prad3a$pctg100<-rowSums(prad3a>=100)/10511
+prad3a$totalreads<-rowSums(prad3a[,1:10511])
 
 # hist(prad3a$pctg100)
 # hist(prad3a$totalreads)
@@ -129,14 +178,23 @@ ggplot(prad3a, mapping = aes(pctg100, totalreads))+geom_point(color="darkred")
 ggplot(prad3a, mapping = aes(pctg100))+geom_histogram(fill="darkred")
 ggplot(prad3a, mapping = aes(totalreads))+geom_histogram(fill="darkred")+geom_vline(aes(xintercept=10000000), color="blue")
 
+min(prad3a$pctg100) #91.2%
 ```
 
-```{r , include=FALSE}
-#normalizing data by gene length RPK
-prad4<- (prad3[,2:486]+1)/prad3$length.gene
+```{r}
+#normalize data by gene length RPK
+
+#Need to correct for length and count of PINX1 (only double gene id that survived filtering) found at bottom of matrix
+prad3.1<-prad3[1:10510,]
+prad3.2<-(prad3.1[,2:484]+1)/prad3.1$length.gene
+
+PINX1_norm<-((dupgenes[2,2:484]+1)/dupgenes$length.gene[2])+((dupgenes[3,2:484]+1)/dupgenes$length.gene[3])
+
+prad4<-rbind(prad3.2,PINX1_norm)
+
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 #applying geTMM
 dge.list<- DGEList(counts = prad4)
 tmm<- calcNormFactors(dge.list, method = "TMM")
@@ -145,25 +203,25 @@ tmmScaleFactor <- tmm$samples
 prad5<-cpm(tmm)
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 prad6<-log2(prad5)
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 #Myke's median method
-mykep4<-(prad3[,2:486]+1)/(prad3$length.gene/1000)
+mykep4<-(prad3[,2:484]+1)/(prad3$length.gene/1000)
 medsizefac<-as.matrix(apply(mykep4,2,median))
 mykep5<-(mykep4)/medsizefac
 mykep6<-log2(mykep5)
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 plot(tmmScaleFactor$norm.factors*tmmScaleFactor$lib.size, medsizefac, xlab="TMM Scaling Factors", ylab="Median Scaling Factors")
 text(22000,100,"correlation=.9959")
 cor(tmmScaleFactor$norm.factors*tmmScaleFactor$lib.size, medsizefac)
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 #replacing counts with values >mean+5sd with mean+5sd
 #replacement value is cutoff value
 
@@ -195,7 +253,7 @@ prad7<-prad6
 
 #batcheffects
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 ### Plate & Vial
 #text file from ubox - https://uofu.box.com/s/si86z6kcweyc70doiztvov5ctykyql08
 
@@ -220,13 +278,13 @@ manids3<-manids2[!(manids2$sample=='06'),]
 
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 ####shipment date
 #from Ubox - https://uofu.box.com/s/z6vayovndywkugfy1bk95peh1lz1cfjk
 mdanderson<-read.table('C:/Users/u6024115/Desktop/TCGA/BatchData.tsv', sep='\t', header=T)
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 # #####Analysis Created date
 #file from ubox - https://uofu.box.com/s/9tkflcja3db1rjz52szuqsm07ovq0ug3
 
@@ -239,22 +297,22 @@ for(i in 2:551){
 }
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 #all days are in May
 colnames(ids)<-c('file_name', 'entity_submitter_id', 'analysis.created.datetime')
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 # extracting analysis created date
 day<-substr(ids$analysis.created.datetime, 1,10)
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 # combining the case ids and date
 creat_date<- as.data.frame(cbind(ids,day))
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 #getting ID for data
 batchvar<-sqldf('select X2, tsource, vial, plate, ShipDate, day
       from manids3
@@ -264,7 +322,7 @@ batchvar<-sqldf('select X2, tsource, vial, plate, ShipDate, day
       on manids3.X2 = creat_date.entity_submitter_id')
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 
 #removing samples as decided based on first pca plots
 #try to keep these in
@@ -287,21 +345,21 @@ TSS<-as.character(batchvar$tsource)
 
 #end batch var
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 cprad7<-as.data.frame(cbind(colnames(prad7),as.character("a")))
 colnames(cprad7)<-c("X3","plate")
 cprad7$plate<-as.character(cprad7$plate)
 cprad7$X3<-as.character(cprad7$X3)
 cprad7$X3<-str_replace_all(cprad7$X3,"[.]","-")
 
-for (i in 1:485) {
+for (i in 1:483) {
   (a<-batchvar$X2==cprad7$X3[i]) 
 cprad7$plate[i]<-as.character(batchvar$plate[a])
 
 }
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 #read demographic and diagnosis data
 #retrieved from clinical data: clinical.cases_selection.2019-11-19.json
 #see prostateclinical.Rmd to see process
@@ -310,7 +368,7 @@ demodata<-read.csv("C:/Users/u6024115/Desktop/TCGA/clinicaldata/demographic_data
 dxdata<-read.csv("C:/Users/u6024115/Desktop/TCGA/clinicaldata/diagnosis_data_prad.csv")
 ```
 
-```{r}
+```{r, include=FALSE}
 demodx<-merge(demodata,dxdata,by="id")
 
 cprad7$id<-substr(cprad7$X3,1,12)
@@ -337,7 +395,7 @@ demodx$combognum<-demodx$pgnum + demodx$sgnum
 
 demodx$centeredg<- demodx$combognum - mean(demodx$combognum)
 
-for (i in 1:485) {
+for (i in 1:483) {
   (a<-demodx$id==cprad7$id[i]) 
 cprad7$centeredg[i]<-demodx$centeredg[a]
 cprad7$racerecode[i]<-demodx$racerecode[a]
@@ -349,19 +407,19 @@ cprad7$X3[1:5]
 colnames(prad7)[1:5]
 ```
 
-```{r}
-#removing single race plates A33R and A32Y
-tfplate<- substr(cprad7$X3,22,25) %in% c("A33R","A32Y")
+```{r, include=FALSE}
+#removing single race plates A33R and A32Y - 2302 also removed after removing biological replicates
+tfplate<- substr(cprad7$X3,22,25) %in% c("A33R","A32Y", "2302")
 sum(tfplate)
 ```
 
-```{r}
+```{r, include=FALSE}
 prad8<-prad7[,!tfplate]
 cprad8<-cprad7[!tfplate,]
 
 ```
 
-```{r}
+```{r, include=FALSE}
 #check correlations to see what needs to be adjusted in combat
 chisq.test(cprad8$plate,cprad8$age_centered, simulate.p.value = T) #no
 chisq.test(cprad8$plate,cprad8$racerecode, simulate.p.value = T) #yes
@@ -369,18 +427,18 @@ chisq.test(cprad8$plate,cprad8$centeredg, simulate.p.value = T) #yes
 
 ```
 
-```{r}
+```{r, include=FALSE}
 mod<-model.matrix(~as.factor(racerecode)+centeredg,data = cprad8)
 combataedata<-ComBat(prad8, cprad8$plate, mod=mod)
 combataedata<-as.data.frame(combataedata)
 ```
 
-#clustering on data before PCA/SPCA
-```{r , include=FALSE}
+#clustering on data before PCA
+```{r}
 
 ```
 
-```{r , include=FALSE}
+```{r}
 library(factoextra)
 library(data.table)
 # library(sparsepca)
@@ -390,7 +448,7 @@ library(data.table)
 ```
 
 #used for comparing PCs
-```{r , include=FALSE}
+```{r}
 pca1<- prcomp(t(combataedata), retx = T, center = T, scale = F)
 pscore<-as.data.frame(abs(pca1$rotation %*% pca1$sdev))
 colnames(pscore) <- c("abs_score")
@@ -405,12 +463,22 @@ setorder(pgenescore,-abs_score)
 setorder(pscore,-abs_score)
 ```
 
+```{r}
+# #files for heidi
+# write.csv(pca1$rotation, "rotation_matrix.csv")
+# 
+# file<-cbind(pca1$sdev^2/sum(pca1$sdev^2), cumsum(pca1$sdev^2/sum(pca1$sdev^2)))
+# 
+# colnames(file)<-c("proportion of variance","cumulative variance")
+# 
+# write.csv(file,"variance_file.csv")
+```
 
 
 
 
 
-```{r , include=FALSE}
+```{r}
 spcaCharts <- function(x) {
     x.var <- x$sdev ^ 2
     x.pvar <- x.var/spca1$var
@@ -428,9 +496,9 @@ pcaCharts <- function(x) {
     x.var <- x$sdev ^ 2
     x.pvar <- x.var/sum(x.var)
     print("proportions of variance:")
-   print(x.pvar[1:30])
+   print(x.pvar[1:19])
    print("total variance")
-   print(sum(x.pvar[1:30]))
+   print(sum(x.pvar[1:19]))
     
     par(mfrow=c(2,2))
     plot(x.pvar,xlab="Principal component", ylab="Proportion of variance explained", ylim=c(0,1), xlim = c(0,30) ,type='b')
@@ -444,7 +512,7 @@ pcplotp<-pcaCharts(pca1)
 ```
 
 #pc compare
-```{r , include=FALSE}
+```{r, include=FALSE}
 # #check loadings
 # pdf("spca_vs_pca.pdf")
 # a<-cor(spca1$scores[,1], pca1$x[,1])
@@ -501,7 +569,7 @@ pcplotp<-pcaCharts(pca1)
 
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 # #number of nonzero genes per PC based on first 3
 # sum(rowSums(spca1$loadings[,1:3]) !=  0) #3628
 # sum(spca1$loadings[,1] !=  0) #1184
@@ -530,7 +598,7 @@ pcplotp<-pcaCharts(pca1)
 
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 # #top 10% genes based on loading values for pc1-3
 # a<-as.data.frame(sort(abs(pca1$rotation[,1]), decreasing = T))
 # colnames(a)<-"abs_loading"
@@ -548,7 +616,7 @@ pcplotp<-pcaCharts(pca1)
 # colnames(pc3_10)<-"pc3_loading"
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 # #compare top 10% pc1-3 with spc1-3
 # sum(row.names(pc1_10) %in% (sloadings1[,1])) #926/1088
 # sum(row.names(pc2_10) %in% (sloadings2[,1])) #887/1088
@@ -557,7 +625,7 @@ pcplotp<-pcaCharts(pca1)
 
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 # #signature plot
 # sloadings1<-as.data.frame(sloadings[sloadings$V1 != 0,])
 # 
@@ -745,7 +813,7 @@ pcplotp<-pcaCharts(pca1)
 # Chromosome.scaffold.name
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 # pdf("spca_1to10_sigplot.pdf", width = 15, height = 10)
 # sigplot_spc1+ggtitle("spc1 signature plot")+scale_fill_discrete(name="chromosome")
 # sigplot_spc2+ggtitle("spc2 signature plot")+scale_fill_discrete(name="chromosome")
@@ -763,7 +831,7 @@ pcplotp<-pcaCharts(pca1)
 ```
 
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 # #pc signature plots
 # pc1_10$gene<-row.names(pc1_10)
 # pc1_10m<-merge(pc1_10,fullpro, by.x="gene", by.y="Gene.stable.ID")
@@ -793,7 +861,7 @@ pcplotp<-pcaCharts(pca1)
 ```
 
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 # pdf("pca_1to3_sigplot.pdf", width = 15, height = 10)
 # sigplot_pc1+ggtitle("pc1 signature plot")+scale_fill_discrete(name="chromosome")
 # sigplot_pc2+ggtitle("pc2 signature plot")+scale_fill_discrete(name="chromosome")
@@ -801,7 +869,7 @@ pcplotp<-pcaCharts(pca1)
 # dev.off()
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 # #comparison plot
 # pdf("spca_vs_pca_1to3_sigplot.pdf", width = 15, height = 10)
 # grid.arrange(sigplot_pc1+ggtitle("pc1 signature plot")+scale_fill_discrete(name="chromosome"),sigplot_spc1+ggtitle("spc1 signature plot")+scale_fill_discrete(name="chromosome"))
@@ -813,21 +881,21 @@ pcplotp<-pcaCharts(pca1)
 ```
 
 #end PC compare, back to normal pipe
-```{r }
+```{r}
 #elbow plot
 source("C:/Users/u6024115/Desktop/TCGA/findElbow.r")
 pc_elbow(pca1$sdev^2,"pc elbow")
-#21 PCs
+#19 PCs
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 pcscores<-pca1$x
 test<-cbind(pcscores, cprad8)
 ggplot(data=test, mapping = aes(PC1, PC2, color=plate))+geom_point()
 
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 
 corbatch1<-aov(PC1 ~ test$plate, data=test)
 corbatch2<-aov(PC2 ~ test$plate, data=test)
@@ -848,8 +916,8 @@ corbatch16<-aov(PC16 ~ test$plate, data=test)
 corbatch17<-aov(PC17 ~ test$plate, data=test)
 corbatch18<-aov(PC18 ~ test$plate, data=test)
 corbatch19<-aov(PC19 ~ test$plate, data=test)
-corbatch20<-aov(PC20 ~ test$plate, data=test)
-corbatch21<-aov(PC21 ~ test$plate, data=test)
+# corbatch20<-aov(PC20 ~ test$plate, data=test)
+# corbatch21<-aov(PC21 ~ test$plate, data=test)
 
 
 summary(corbatch1)
@@ -871,14 +939,14 @@ summary(corbatch16)
 summary(corbatch17)
 summary(corbatch18)
 summary(corbatch19)
-summary(corbatch20)
-summary(corbatch21)
+# summary(corbatch20)
+# summary(corbatch21)
 # removed any correlation with plate
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 
-pcaindv<-data.frame(pca1$x[,1:21])
+pcaindv<-data.frame(pca1$x[,1:19])
 
 TCGAids<-rownames(pcaindv)
 rownames(pcaindv)<-NULL
@@ -896,10 +964,10 @@ pcaindv<-sqldf('select p.*, b.*
       on TCGAids = b.x2')
 
 
-#note- using 21 PCs based on elbow plot of prop var
+#note- using 19 PCs based on elbow plot of prop var
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 #read demographic and diagnosis data
 #retrieved from clinical data: clinical.cases_selection.2019-11-19.json
 #see prostateclinical.Rmd to see process
@@ -911,7 +979,7 @@ pcaindv<-sqldf('select p.*, b.*
 # dxdata<-read.csv("C:/Users/u6024115/Desktop/TCGA/clinicaldata/diagnosis_data_prad.csv")
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 #combine demo and dx data to rna data
 pcaindv$id<-substr(pcaindv$TCGAids,1,12)
 
@@ -921,7 +989,7 @@ pcaindv4<-merge(pcaindv3, dxdata, by="id", all.x=T)
 
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 pcaindv4$racerecode[pcaindv4$race == "asian"] <-"other" 
 pcaindv4$racerecode[pcaindv4$race == "american indian or alaska native"] <-"other" 
 pcaindv4$racerecode[pcaindv4$race== "not reported" ] <-"other" 
@@ -930,7 +998,7 @@ pcaindv4$racerecode[pcaindv4$race== "black or african american" ] <-"black or af
 
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 pcaindv4$agedx<-round(-1*pcaindv4$days.to.birth/365.25)
 summary(pcaindv4$primary.gleason.grade)
 summary(pcaindv4$secondary.gleason.grade)
@@ -944,7 +1012,7 @@ summary(pcaindv4$prior.treatment)
 
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 #create risk categories based on gleason
 
 pcaindv4$risk<-"something"
@@ -965,7 +1033,7 @@ table(pcaindv4$risk)
 
 ```
 
-```{r , include=FALSE}
+```{r, include=FALSE}
 #create binary age at diagnosis <55 y/n
 
 pcaindv4$youngold[pcaindv4$agedx<55]<-"young"
@@ -976,7 +1044,7 @@ pcaindv4$youngold[pcaindv4$agedx>=55]<-"old"
 #72 young
 ```
 
-```{r}
+```{r, include=FALSE}
 # #checking correlation with plate with variables of interest - 3/26.20
 # #need to go back and put some in combat
 # set.seed(200)
@@ -990,7 +1058,7 @@ pcaindv4$youngold[pcaindv4$agedx>=55]<-"old"
 ```
 
 #plots and correlation check
-```{r}
+```{r, include=FALSE}
 ggplot(data=pcaindv4, mapping = aes(PC1, PC2, color=risk))+geom_point(alpha=.5)
 ggplot(data=pcaindv4, mapping = aes(PC1, PC2, color=youngold))+geom_point(alpha=.5)
 ```
@@ -1016,8 +1084,8 @@ corbatch16<-aov(PC16 ~ pcaindv4$risk, data=pcaindv4)
 corbatch17<-aov(PC17 ~ pcaindv4$risk, data=pcaindv4)
 corbatch18<-aov(PC18 ~ pcaindv4$risk, data=pcaindv4)
 corbatch19<-aov(PC19 ~ pcaindv4$risk, data=pcaindv4)
-corbatch20<-aov(PC20 ~ pcaindv4$risk, data=pcaindv4)
-corbatch21<-aov(PC21 ~ pcaindv4$risk, data=pcaindv4)
+# corbatch20<-aov(PC20 ~ pcaindv4$risk, data=pcaindv4)
+# corbatch21<-aov(PC21 ~ pcaindv4$risk, data=pcaindv4)
 
 summary(corbatch1)
 summary(corbatch2)
@@ -1038,9 +1106,9 @@ summary(corbatch16)
 summary(corbatch17)
 summary(corbatch18)
 summary(corbatch19)
-summary(corbatch20)
-summary(corbatch21)
-# 2,3,4,7,13
+# summary(corbatch20)
+# summary(corbatch21)
+# # 2,3,4,7,13
 ```
 
 ```{r}
@@ -1063,8 +1131,8 @@ ggplot(data=pcaindv4, mapping = aes(PC16, fill=risk))+geom_density(alpha=.2)
 ggplot(data=pcaindv4, mapping = aes(PC17, fill=risk))+geom_density(alpha=.2)
 ggplot(data=pcaindv4, mapping = aes(PC18, fill=risk))+geom_density(alpha=.2)
 ggplot(data=pcaindv4, mapping = aes(PC19, fill=risk))+geom_density(alpha=.2)
-ggplot(data=pcaindv4, mapping = aes(PC20, fill=risk))+geom_density(alpha=.2)
-ggplot(data=pcaindv4, mapping = aes(PC21, fill=risk))+geom_density(alpha=.2)
+# ggplot(data=pcaindv4, mapping = aes(PC20, fill=risk))+geom_density(alpha=.2)
+# ggplot(data=pcaindv4, mapping = aes(PC21, fill=risk))+geom_density(alpha=.2)
 ```
 
 ```{r}
@@ -1088,8 +1156,8 @@ corbatch16<-aov(PC16 ~ pcaindv4$youngold, data=pcaindv4)
 corbatch17<-aov(PC17 ~ pcaindv4$youngold, data=pcaindv4)
 corbatch18<-aov(PC18 ~ pcaindv4$youngold, data=pcaindv4)
 corbatch19<-aov(PC19 ~ pcaindv4$youngold, data=pcaindv4)
-corbatch20<-aov(PC20 ~ pcaindv4$youngold, data=pcaindv4)
-corbatch21<-aov(PC21 ~ pcaindv4$youngold, data=pcaindv4)
+# corbatch20<-aov(PC20 ~ pcaindv4$youngold, data=pcaindv4)
+# corbatch21<-aov(PC21 ~ pcaindv4$youngold, data=pcaindv4)
 
 
 summary(corbatch1)
@@ -1111,10 +1179,10 @@ summary(corbatch16)
 summary(corbatch17)
 summary(corbatch18)
 summary(corbatch19)
-summary(corbatch20)
-summary(corbatch21)
+# summary(corbatch20)
+# summary(corbatch21)
 
-# 2,3,4,16,20
+# 3,4,16
 ```
 
 ```{r}
@@ -1137,24 +1205,24 @@ ggplot(data=pcaindv4, mapping = aes(PC16, fill=youngold))+geom_density(alpha=.2)
 ggplot(data=pcaindv4, mapping = aes(PC17, fill=youngold))+geom_density(alpha=.2)
 ggplot(data=pcaindv4, mapping = aes(PC18, fill=youngold))+geom_density(alpha=.2)
 ggplot(data=pcaindv4, mapping = aes(PC19, fill=youngold))+geom_density(alpha=.2)
-ggplot(data=pcaindv4, mapping = aes(PC20, fill=youngold))+geom_density(alpha=.2)
-ggplot(data=pcaindv4, mapping = aes(PC21, fill=youngold))+geom_density(alpha=.2)
+# ggplot(data=pcaindv4, mapping = aes(PC20, fill=youngold))+geom_density(alpha=.2)
+# ggplot(data=pcaindv4, mapping = aes(PC21, fill=youngold))+geom_density(alpha=.2)
 ```
 
 ```{r}
 #check for correlations summary
 print("age")
-for (i in 1:21) {
+for (i in 1:19) {
   print(summary(aov(pcaindv4[,(i+2)] ~ pcaindv4$agedx, data=pcaindv4)))
 }
-print("")
+print("PC 3,4,10,14")
 print("")
 print("")
 print("race")
-for (i in 1:21) {
+for (i in 1:19) {
   print(summary(aov(pcaindv4[,(i+2)] ~ pcaindv4$race, data=pcaindv4)))
 }
-print("")
+print("PC 6,13,19")
 print("")
 print("")
 
@@ -1178,26 +1246,26 @@ pcaindv4$racerecode<-relevel(as.factor(pcaindv4$racerecode),"white")
 
 sum(is.na(pcaindv4$riskrecode))
 
-gleasonpc.d<-pcaindv4[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","PC20","PC21","riskrecode")]
+gleasonpc.d<-pcaindv4[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","riskrecode")]
 
 gleasonpc.d2<-mlogit.data(gleasonpc.d, varying = NULL, choice = "riskrecode",shape = "wide")
 
-gleasonpc.m<-mlogit(riskrecode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20 +PC21, data=gleasonpc.d2, reflevel = 1)
+gleasonpc.m<-mlogit(riskrecode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19, data=gleasonpc.d2, reflevel = 1)
 summary(gleasonpc.m)
 
-gleasonpcex.d<-pcaindv4[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","PC20","PC21","riskrecode","racerecode","age_centered")]
+gleasonpcex.d<-pcaindv4[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","riskrecode","racerecode","age_centered")]
 
 gleasonpcex.d2<-mlogit.data(gleasonpcex.d, varying = NULL, choice = "riskrecode",shape = "wide")
 
-gleasonpcex.m<-mlogit(riskrecode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20 +PC21+racerecode + age_centered, data=gleasonpcex.d2, reflevel = 1)
+gleasonpcex.m<-mlogit(riskrecode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +racerecode + age_centered, data=gleasonpcex.d2, reflevel = 1)
 summary(gleasonpcex.m)
 
-gleasonpcexint.d<-pcaindv4[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","PC20","PC21","riskrecode","racerecode","age_centered")]
+gleasonpcexint.d<-pcaindv4[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","riskrecode","racerecode","age_centered")]
 
 gleasonpcexint.d2<-mlogit.data(gleasonpcexint.d, varying = NULL, choice = "riskrecode",shape = "wide")
 
-gleasonpcexint.m<-mlogit(riskrecode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20 +PC21+racerecode + age_centered +
-                         (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20 +PC21)*(racerecode + age_centered), data=gleasonpcexint.d2, reflevel = 1)
+gleasonpcexint.m<-mlogit(riskrecode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +racerecode + age_centered +
+                         (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 )*(racerecode + age_centered), data=gleasonpcexint.d2, reflevel = 1)
 summary(gleasonpcexint.m)
 
 ```
@@ -1212,15 +1280,15 @@ pcaindv4$youngoldrecode[pcaindv4$youngold=="old"]<-1
 youngold.m<-glm(youngoldrecode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19, family = "binomial", data=pcaindv4)
 summary(youngold.m)
 
-youngold.m2<-glm(youngoldrecode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20 +PC21+ racerecode, family = "binomial", data=pcaindv4)
+youngold.m2<-glm(youngoldrecode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 + racerecode, family = "binomial", data=pcaindv4)
 summary(youngold.m2)
 
 #issues here
-youngold.m3<-glm(youngoldrecode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20 +PC21+ racerecode + (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20 +PC21) * racerecode, family = "binomial", data=pcaindv4)
+youngold.m3<-glm(youngoldrecode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 + racerecode + (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 ) * racerecode, family = "binomial", data=pcaindv4)
 summary(youngold.m3)
 
 #age continuous models\
-youngold.m<-lm(age_centered ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20 +PC21, data=pcaindv4)
+youngold.m<-lm(age_centered ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19, data=pcaindv4)
 summary(youngold.m)
 
 youngold.m2<-lm(age_centered ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 + racerecode, data=pcaindv4)
@@ -1236,13 +1304,13 @@ pcaindv4$ajcc.n.recode[pcaindv4$ajcc.pathologic.n=="N0"]<-0
 pcaindv4$ajcc.n.recode[pcaindv4$ajcc.pathologic.n=="N1"]<-1
 sum(is.na(pcaindv4$ajcc.n.recode))
 
-ajcc.n.m<-glm(ajcc.n.recode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20 +PC21, family = "binomial", data=pcaindv4)
+ajcc.n.m<-glm(ajcc.n.recode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19, family = "binomial", data=pcaindv4)
 summary(ajcc.n.m)
 
-ajcc.n.m2<-glm(ajcc.n.recode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20 +PC21+ racerecode +age_centered, family = "binomial", data=pcaindv4)
+ajcc.n.m2<-glm(ajcc.n.recode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 + racerecode +age_centered, family = "binomial", data=pcaindv4)
 summary(ajcc.n.m2)
 
-ajcc.n.m3<-glm(ajcc.n.recode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20 +PC21+ racerecode +age_centered + (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20 +PC21) * (racerecode +age_centered), family = "binomial", data=pcaindv4)
+ajcc.n.m3<-glm(ajcc.n.recode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 + racerecode +age_centered + (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 ) * (racerecode +age_centered), family = "binomial", data=pcaindv4)
 summary(ajcc.n.m3)
 ```
 
@@ -1256,20 +1324,20 @@ pcaindv4$ajcc.path.t.recode[pcaindv4$ajcc.pathologic.t=="T3b"]<-5
 pcaindv4$ajcc.path.t.recode[pcaindv4$ajcc.pathologic.t=="T4"]<-6
 sum(is.na(pcaindv4$ajcc.path.t.recode))
 
-path.t.d<-pcaindv4[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","PC20","PC21","ajcc.path.t.recode")]
+path.t.d<-pcaindv4[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","ajcc.path.t.recode")]
 
 path.t.d2<-mlogit.data(path.t.d, varying = NULL, choice = "ajcc.path.t.recode",shape = "wide")
 
-path.t.m<-mlogit(ajcc.path.t.recode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20 +PC21, data=path.t.d2, reflevel = 1)
+path.t.m<-mlogit(ajcc.path.t.recode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19, data=path.t.d2, reflevel = 1)
 summary(path.t.m)
 
 
 
-pathex.t.d<-pcaindv4[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","PC20","PC21","racerecode","age_centered","ajcc.path.t.recode")]
+pathex.t.d<-pcaindv4[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","racerecode","age_centered","ajcc.path.t.recode")]
 
 pathex.t.d2<-mlogit.data(pathex.t.d, varying = NULL, choice = "ajcc.path.t.recode",shape = "wide")
 
-pathex.t.m<-mlogit(ajcc.path.t.recode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20 +PC21 + racerecode + age_centered, data=pathex.t.d2, reflevel = 1)
+pathex.t.m<-mlogit(ajcc.path.t.recode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 + racerecode + age_centered, data=pathex.t.d2, reflevel = 1)
 summary(pathex.t.m)
 
 
@@ -1285,11 +1353,11 @@ pcaindv4r$ajcc.t.rollup[pcaindv4r$ajcc.pathologic.t=="T4"]<-3
 sum(is.na(pcaindv4r$ajcc.t.rollup))
 pcaindv4r<-droplevels(pcaindv4r)
 
-pathexint.t.d<-pcaindv4r[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","PC20","PC21","racerecode","age_centered","ajcc.t.rollup")]
+pathexint.t.d<-pcaindv4r[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","racerecode","age_centered","ajcc.t.rollup")]
 
 pathexint.t.d2<-mlogit.data(pathexint.t.d, varying = NULL, choice = "ajcc.t.rollup",shape = "wide")
 
-pathexint.t.m<-mlogit(ajcc.t.rollup ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20 +PC21 + racerecode + (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20 +PC21) * (racerecode), data=pathexint.t.d2, reflevel = 1)
+pathexint.t.m<-mlogit(ajcc.t.rollup ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 + racerecode + (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19) * (racerecode), data=pathexint.t.d2, reflevel = 1)
 summary(pathexint.t.m)
 
 ```
@@ -1371,11 +1439,11 @@ ggplot(pcaindv5, aes(x=PC18)) +
 ggplot(pcaindv5, aes(x=PC19)) +
   geom_histogram(bins=30, color="grey30", fill="blue") + facet_grid(pcaindv5$Subtype)
 
-ggplot(pcaindv5, aes(x=PC20)) +
-  geom_histogram(bins=30, color="grey30", fill="blue") + facet_grid(pcaindv5$Subtype)
-
-ggplot(pcaindv5, aes(x=PC21)) +
-  geom_histogram(bins=30, color="grey30", fill="blue") + facet_grid(pcaindv5$Subtype)
+# ggplot(pcaindv5, aes(x=PC20)) +
+#   geom_histogram(bins=30, color="grey30", fill="blue") + facet_grid(pcaindv5$Subtype)
+# 
+# ggplot(pcaindv5, aes(x=PC21)) +
+#   geom_histogram(bins=30, color="grey30", fill="blue") + facet_grid(pcaindv5$Subtype)
 
 # # histogram(data=svdindv2, xName='PCA1', groupName='Subtype', legentPosition=tp)
 ```
@@ -1418,16 +1486,18 @@ summary(pcaindv5$AR_score)
 ```{r}
 #check correlations
 print("age")
-for (i in 1:21) {
-  print(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$age_centered, data=pcaindv5)))
-}
+for (i in 1:19) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$age_centered, data=pcaindv5)))
+if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
+  }
 print("")
 print("")
 print("")
 print("race")
-for (i in 1:21) {
-  print(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$race, data=pcaindv5)))
-}
+for (i in 1:19) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$race, data=pcaindv5)))
+if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
+  }
 print("")
 print("")
 print("")
@@ -1441,14 +1511,16 @@ print("")
 print("")
 print("")
 print("rna purity")
-for (i in 1:21) {
-  print(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$avgRNA_purity, data=pcaindv5)))
-}
+for (i in 1:19) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$avgRNA_purity, data=pcaindv5)))
+if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
+  }
 
 print("tumor cellurlarity path")
-for (i in 1:21) {
-  print(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$Tumor_cellularity_pathology, data=pcaindv5)))
-}
+for (i in 1:19) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$Tumor_cellularity_pathology, data=pcaindv5)))
+if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
+  }
 ```
 
 ```{r}
@@ -1481,21 +1553,21 @@ summary(gleasonsubexint.m)
 #PCs
 
 
-gleasonpc.cd<-pcaindv5[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","PC20","PC21","riskrecode")]
+gleasonpc.cd<-pcaindv5[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","riskrecode")]
 
 gleasonpc.cd2<-mlogit.data(gleasonpc.cd, varying = NULL, choice = "riskrecode",shape = "wide")
 
-gleasonpc.cm<-mlogit(riskrecode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20+PC21, data=gleasonpc.cd2, reflevel = 1)
+gleasonpc.cm<-mlogit(riskrecode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 , data=gleasonpc.cd2, reflevel = 1)
 summary(gleasonpc.cm)
 
 
 ##singularity issues - solved by removing samples with "other" race and removing age variable
 
-gleasonpcexint.cd<-pcaindv5r[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","PC20","PC21","riskrecode","racerecode","age_centered")]
+gleasonpcexint.cd<-pcaindv5r[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","riskrecode","racerecode","age_centered")]
 
 gleasonpcexint.cd2<-mlogit.data(gleasonpcexint.cd, varying = NULL, choice = "riskrecode",shape = "wide")
 
-gleasonpcexint.cm<-mlogit(riskrecode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20+PC21+racerecode +  (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20+PC21) * (racerecode), data=gleasonpcexint.cd2, reflevel = 1)
+gleasonpcexint.cm<-mlogit(riskrecode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +racerecode +  (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 ) * (racerecode), data=gleasonpcexint.cd2, reflevel = 1)
 summary(gleasonpcexint.cm)
 ```
 
@@ -1537,14 +1609,14 @@ ajcc.n.subexint<-glm(ajcc.n.recode ~ Subtype + racerecode + age_centered + Subty
 summary(ajcc.n.subexint)
 
 #PC
-ajcc.n.pc<-glm(ajcc.n.recode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20+PC21, family = "binomial", data=pcaindv5)
+ajcc.n.pc<-glm(ajcc.n.recode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19, family = "binomial", data=pcaindv5)
 summary(ajcc.n.pc)
 
-ajcc.n.pcex<-glm(ajcc.n.recode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20+PC21+ racerecode +age_centered, family = "binomial", data=pcaindv5)
+ajcc.n.pcex<-glm(ajcc.n.recode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 + racerecode +age_centered, family = "binomial", data=pcaindv5)
 summary(ajcc.n.pcex)
 
 #issues here- tried to remove "other" race samples, as well as age
-ajcc.n.pcexint<-glm(ajcc.n.recode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20+PC21+ racerecode +age_centered + (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 +PC20+PC21) * (racerecode +age_centered), family = "binomial", data=pcaindv5)
+ajcc.n.pcexint<-glm(ajcc.n.recode ~ PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 + racerecode +age_centered + (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 ) * (racerecode +age_centered), family = "binomial", data=pcaindv5)
 summary(ajcc.n.pcexint)
 
 
@@ -1593,20 +1665,20 @@ summary(path.t.m.mrnaexint)
 
 #PCs
 
-path.t.dpc<-pcaindv5[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","PC20","PC21","ajcc.path.t.recode")]
+path.t.dpc<-pcaindv5[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","ajcc.path.t.recode")]
 
 path.t.dpc2<-mlogit.data(path.t.dpc, varying = NULL, choice = "ajcc.path.t.recode",shape = "wide")
 
-path.t.mpc<-mlogit(ajcc.path.t.recode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20+PC21, data=path.t.dpc2, reflevel = 1)
+path.t.mpc<-mlogit(ajcc.path.t.recode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19, data=path.t.dpc2, reflevel = 1)
 summary(path.t.mpc)
 
 
 
-pathex.t.dpc<-pcaindv5[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","PC20","PC21","racerecode","age_centered","ajcc.path.t.recode")]
+pathex.t.dpc<-pcaindv5[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","racerecode","age_centered","ajcc.path.t.recode")]
 
 pathex.t.dpc2<-mlogit.data(pathex.t.dpc, varying = NULL, choice = "ajcc.path.t.recode",shape = "wide")
 
-pathex.t.mpc<-mlogit(ajcc.path.t.recode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20+PC21 + racerecode + age_centered, data=pathex.t.dpc2, reflevel = 1)
+pathex.t.mpc<-mlogit(ajcc.path.t.recode ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 + racerecode + age_centered, data=pathex.t.dpc2, reflevel = 1)
 summary(pathex.t.mpc)
 
 #singularity issues 
@@ -1619,15 +1691,15 @@ pcaindv5r$ajcc.t.rollup[pcaindv5r$ajcc.pathologic.t=="T3b"]<-3
 pcaindv5r$ajcc.t.rollup[pcaindv5r$ajcc.pathologic.t=="T4"]<-3
 sum(is.na(pcaindv5r$ajcc.t.rollup))
 pcaindv5r<-droplevels(pcaindv5r)
-pathexint.t.dpc<-pcaindv5r[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","PC20","PC21","racerecode","age_centered","ajcc.t.rollup")]
+pathexint.t.dpc<-pcaindv5r[,c("PC1", "PC2", "PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","racerecode","age_centered","ajcc.t.rollup")]
 
 pathexint.t.dpc2<-mlogit.data(pathexint.t.dpc, varying = NULL, choice = "ajcc.t.rollup",shape = "wide")
 
-pathexint.t.mpc<-mlogit(ajcc.t.rollup ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20+PC21 + racerecode  +  (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19+PC20+PC21) * (racerecode ), data=pathexint.t.dpc2, reflevel = 1)
+pathexint.t.mpc<-mlogit(ajcc.t.rollup ~  1 | PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19 + racerecode  +  (PC1 + PC2+ PC3+ PC4+ PC5+ PC6+ PC7+ PC8+ PC9+ PC10+ PC11+ PC12+ PC13+ PC14+ PC15+ PC16+ PC17+ PC18+ PC19) * (racerecode ), data=pathexint.t.dpc2, reflevel = 1)
 summary(pathexint.t.mpc)
 ```
 
-```{r}
+```{r, include=FALSE}
 ggplot(data=pcaindv5, mapping = aes(PC1, PC2, color=Subtype))+geom_point()
 ```
 
@@ -1652,8 +1724,8 @@ corbatch16<-aov(PC16 ~ pcaindv5$Subtype, data=pcaindv5)
 corbatch17<-aov(PC17 ~ pcaindv5$Subtype, data=pcaindv5)
 corbatch18<-aov(PC18 ~ pcaindv5$Subtype, data=pcaindv5)
 corbatch19<-aov(PC19 ~ pcaindv5$Subtype, data=pcaindv5)
-corbatch20<-aov(PC20 ~ pcaindv5$Subtype, data=pcaindv5)
-corbatch21<-aov(PC21 ~ pcaindv5$Subtype, data=pcaindv5)
+# corbatch20<-aov(PC20 ~ pcaindv5$Subtype, data=pcaindv5)
+# corbatch21<-aov(PC21 ~ pcaindv5$Subtype, data=pcaindv5)
 
 summary(corbatch1)
 summary(corbatch2)
@@ -1674,9 +1746,9 @@ summary(corbatch16)
 summary(corbatch17)
 summary(corbatch18)
 summary(corbatch19)
-summary(corbatch20)
-summary(corbatch21)
-# 1,2,3,4,7,9,11,12,13,14,15,16,17,18,19,21
+# summary(corbatch20)
+# summary(corbatch21)
+# 1,2,3,4,5,8,9,10,11,12,13,14,15,16,17,18,19
 ```
 
 ```{r}
@@ -1703,81 +1775,263 @@ ggplot(data=pcaindv5, mapping = aes(PC16, fill=Subtype))+geom_density(alpha=.2)
 ggplot(data=pcaindv5, mapping = aes(PC17, fill=Subtype))+geom_density(alpha=.2)
 ggplot(data=pcaindv5, mapping = aes(PC18, fill=Subtype))+geom_density(alpha=.2)
 ggplot(data=pcaindv5, mapping = aes(PC19, fill=Subtype))+geom_density(alpha=.2)
-ggplot(data=pcaindv5, mapping = aes(PC20, fill=Subtype))+geom_density(alpha=.2)
-ggplot(data=pcaindv5, mapping = aes(PC21, fill=Subtype))+geom_density(alpha=.2)
+# ggplot(data=pcaindv5, mapping = aes(PC20, fill=Subtype))+geom_density(alpha=.2)
+# ggplot(data=pcaindv5, mapping = aes(PC21, fill=Subtype))+geom_density(alpha=.2)
 ```
 
 ```{r}
 #PCs correlated with mutations
-   # ERG
-for (i in 1:21) {
+   print("ERG")
+for (i in 1:19) {
   a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$ERG_status, data=pcaindv5)))
   if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
 }
-   # ETV1
-for (i in 1:21) {
+   print("ETV1")
+for (i in 1:19) {
   a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$ETV1_status, data=pcaindv5)))
   if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
 } 
-  # ETV4
-for (i in 1:21) {
+  print("ETV4")
+for (i in 1:19) {
   a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$ETV4_status, data=pcaindv5)))
   if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
 } 
-  # HRAS
-for (i in 1:21) {
+  print("HRAS")
+for (i in 1:19) {
   a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$HRAS_mut, data=pcaindv5)))
   if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
 } 
-  # IDH1
-for (i in 1:21) {
+ print("IDH1")
+for (i in 1:19) {
   a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$IDH1_mut, data=pcaindv5)))
   if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
 } 
-  # FOXA1
-for (i in 1:21) {
+  print("FOXA1")
+for (i in 1:19) {
   a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$FOXA1_mut, data=pcaindv5)))
   if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
 } 
-  # BRCA1
-for (i in 1:21) {
+ print("BRCA1")
+for (i in 1:19) {
   a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$BRCA1_mut, data=pcaindv5)))
   if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
 } 
-  # BRCA2
-for (i in 1:21) {
+  print("BRCA2")
+for (i in 1:19) {
   a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$BRCA2_mut, data=pcaindv5)))
   if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
 } 
-  # BRCA1_germline
-for (i in 1:21) {
+  print("BRCA1_germline")
+for (i in 1:19) {
   a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$BRCA1_germline_mut, data=pcaindv5)))
   if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
 } 
-  # BRCA2_germline
-for (i in 1:21) {
+  print("BRCA2_germline")
+for (i in 1:19) {
   a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$BRCA2_germline_mut, data=pcaindv5)))
   if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
 } 
-  # TP53
-for (i in 1:21) {
+print("TP53")
+for (i in 1:19) {
   a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$TP53_mut, data=pcaindv5)))
   if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
 } 
-  # PTEN
-for (i in 1:21) {
-  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$ERG_status, data=pcaindv5)))
+  print("PTEN")
+for (i in 1:19) {
+  a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$PTEN_mut, data=pcaindv5)))
   if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
 } 
-  # BRAF
-for (i in 1:21) {
+  print("BRAF")
+for (i in 1:19) {
   a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$BRAF_mut, data=pcaindv5)))
   if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
 } 
-  # SPOP
-for (i in 1:21) {
+  print("SPOP")
+for (i in 1:19) {
   a<-(summary(aov(pcaindv5[,(i+2)] ~ pcaindv5$SPOP_mut, data=pcaindv5)))
   if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
 }
 ```
 
+```{r}
+#make heidi's plots look good
+heatmat<-matrix(0, nrow = 19, ncol = 14)
+heatmat[2,1] <- 1
+heatmat[3,1] <- 1
+heatmat[4,1] <- 1
+heatmat[12,1] <- 1
+heatmat[16,1] <- 1
+heatmat[8,2] <- 1
+heatmat[11,2] <- 1
+heatmat[12,2] <- 1
+heatmat[13,2] <- 1
+heatmat[14,2] <- 1
+heatmat[16,2] <- 1
+heatmat[3,3] <- 1
+heatmat[6,3] <- 1
+heatmat[12,3] <- 1
+heatmat[13,3] <- 1
+heatmat[16,3] <- 1
+heatmat[19,3] <- 1
+heatmat[7,4] <- 1
+heatmat[9,4] <- 1
+heatmat[11,4] <- 1
+heatmat[4,5] <- 1
+heatmat[5,5] <- 1
+heatmat[8,5] <- 1
+heatmat[15,5] <- 1
+heatmat[19,5] <- 1
+#=== IDH1 col 5 ===#
+heatmat[2,6] <- 1
+heatmat[4,6] <- 1
+heatmat[10,6] <- 1
+heatmat[12,6] <- 1
+heatmat[4,7] <- 1
+heatmat[6,7] <- 1
+heatmat[11,7] <- 1
+heatmat[12,7] <- 1
+heatmat[13,7] <- 1
+heatmat[15,7] <- 1
+heatmat[3,8] <- 1
+heatmat[15,8] <- 1
+heatmat[2,11] <- 1
+heatmat[3,11] <- 1
+heatmat[11,11] <- 1
+heatmat[16,11] <- 1
+heatmat[2,14] <- 1
+heatmat[4,14] <- 1
+heatmat[7,14] <- 1
+heatmat[9,14] <- 1
+heatmat[10,14] <- 1
+heatmat[12,14] <- 1
+heatmat[14,14] <- 1
+heatmat[17,14] <- 1
+heatmat[18,14] <- 1
+heatmat[19,14] <- 1
+
+```
+
+```{r}
+heatmat<-as.data.frame(t(heatmat))
+colnames(heatmat)<-c("PC1","PC2","PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19")
+heatmat$gene<-c("ERG","ETV1","ETV4","HRAS","IDH1","FOXA1","BRCA1","BRCA2","BRCA1germline","BRCA2germline","TP53","PTEN","BRAF","SPOP")
+```
+
+```{r}
+heater<-melt(heatmat, id.vars="gene")
+```
+
+```{r}
+library(lubridate)
+library(viridis) # colour blind friendly palette, works in B&W also
+library(Interpol.T) #  will generate a large dataset on initial load
+library(lubridate) # for easy date manipulation
+library(ggExtra) # because remembering ggplot theme options is beyond
+```
+
+
+```{r}
+p <-ggplot(heater,aes(variable,gene,fill=value))+
+  geom_tile(color= "black",size=0.1) + 
+ scale_fill_gradient(low='darkorchid4', high='darkorange')
+# p <-p + facet_grid(label~month)
+# p <-p + scale_y_continuous(trans = "reverse", breaks = unique(MyData$hour))
+# p <-p + scale_x_discrete(breaks =c('Mon', 'Tue', 'Wed', 'Thu', 'Fri'))
+# p <-p + theme_minimal(base_size = 8)
+ p <-p + labs(title= paste(""), x="Principal Component", y="Gene")
+p <-p + theme(legend.position = "bottom")+
+  theme(plot.title=element_text(size = 14))+
+  theme(axis.text.y=element_text(size=6)) +
+  theme(strip.background = element_rect(colour="white"))+
+theme(plot.title=element_text(hjust=0))+
+  theme(axis.ticks=element_blank())+
+  theme(axis.text=element_text(size=7))+
+  theme(legend.title=element_text(size=8))+
+  theme(legend.text=element_text(size=6))+
+  removeGrid()#ggExtra
+#  
+# you will want to expand your plot screen before this bit!
+p #awesomeness
+```
+
+```{r}
+#======================================#
+#  needs to be redone with new coefs  #
+#=====================================#
+
+coefmat<-matrix(0,nrow = 9,ncol = 22)
+
+coefmat[2,1]<- -0.0263337
+coefmat[3,1]<- -0.0375641
+coefmat[4,1]<- 0.02761
+
+coefmat[1,2]<- -0.024604
+coefmat[3,2]<- 0.0608005
+coefmat[4,2]<- -0.043951
+coefmat[9,2]<- 0.10949
+
+coefmat[1,3]<- -0.030164
+coefmat[2,3]<- -0.0406487
+coefmat[3,3]<- -0.1225012
+coefmat[4,3]<- -0.047473
+coefmat[7,3]<- -0.081566
+coefmat[8,3]<- -0.13516
+coefmat[9,3]<- -0.12975
+
+coefmat[1,4]<- -0.033854
+coefmat[2,4]<- -0.1063705
+coefmat[3,4]<- -0.2170188
+coefmat[4,4]<- -0.036813
+coefmat[7,4]<- -0.13689
+coefmat[8,4]<- -0.17387
+coefmat[9,4]<- -0.19308
+
+coefmat[3,5]<- -0.0448391
+coefmat[4,5]<- 0.037901
+
+coefmat[2,7]<- -0.0585696 
+coefmat[3,7]<- -0.1248874
+
+coefmat[6,9]<- 0.16546
+coefmat[7,9]<- 0.17073
+coefmat[8,9]<- 0.16781
+coefmat[9,9]<- 0.20208
+
+coefmat[5,10]<- 0.39284
+  
+coefmat[1,11]<- -0.046956
+coefmat[2,11]<- 0.0754708
+  
+coefmat[3,14]<- 0.1341687
+
+coefmat[1,16]<- -0.06632
+
+coefmat[5,17]<- -0.38954
+coefmat[6,17]<- -0.28161
+coefmat[7,17]<- -0.27176
+coefmat[8,17]<- -0.31337
+coefmat[9,17]<- -0.37939
+
+coefmat[5,18]<- -0.070763
+coefmat[4,18]<- -0.50713
+
+coefmat[1,20]<- -0.065155
+```
+
+```{r}
+coefmat<-as.data.frame(coefmat)
+
+colnames(coefmat)<-c("PC1","PC2","PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10","PC11","PC12","PC13","PC14","PC15","PC16","PC17","PC18","PC19","Race")
+
+coefmat$outcomes<-c("Young Age","Gleason Moderate","Gleason High","Cancer in Lymph Node","Unilateral, Involving more than 1/2 of side","Bilateral","Extraprostatic or Microscopic Invasion of Bladder Neck","Seminal Vesical Invasion","Invasion of Rectum, Levator Muscles, or Pelvic Wall")
+```
+
+```{r}
+meltcoef<-melt(coefmat, id.vars="outcomes")
+```
+
+```{r}
+cplot<-ggplot(data=meltcoef, mapping=aes(value,variable, fill=outcomes))+geom_bar(stat="identity", position = position_dodge())+theme_classic()
+
+cplot
+```
