@@ -157,6 +157,46 @@ colnames(PINX1)<-colnames(goodgenes)
 prad1.3<-rbind(goodgenes, MATR3, PINX1)
 ```
 
+```{r}
+genestocheck<-c("TPX2"
+,"BGN"
+,"FAM13C1"
+,"KLK2"
+,"SRD5A2"
+,"ASPN"
+,"FOXS1"
+,"SMC4"
+,"FAM72B"
+,'ITGBL1'
+,"LPPR4"
+,"BUB1"
+,"GOLGA7B"
+,"CENPF"
+,"GDF3"
+,"ESM1"
+,"MYT1"
+,"LRFN2"
+,"SHCBP1"
+,"AHRR"
+,"CBX2"
+,"NUF2"
+,"FGF14"
+,"TMEM132E"
+,"FAM72D"
+,"CST2"
+,"KIF14"
+,"APLNR"
+,"DLGAP5"
+,"CENPE"
+,"IGSF1"
+,"ASPA"
+,"SLC22A1"
+,"C2orf88"
+,"GLB1L3"
+,"PAGE4"
+,"EDN3"
+)
+```
 
 ```{r, include=FALSE}
 rwz100<-(rowSums(prad1.3[,2:481]>=100)/483)*100 #percent of samples with count >=100
@@ -436,11 +476,6 @@ combataedata<-ComBat(prad8, cprad8$plate, mod=mod)
 combataedata<-as.data.frame(combataedata)
 ```
 
-#clustering on data before PCA
-```{r}
-
-```
-
 ```{r}
 library(factoextra)
 library(data.table)
@@ -450,7 +485,6 @@ library(data.table)
 # spca1<-spca(t(combataedata), k=30)
 ```
 
-#used for comparing PCs
 ```{r}
 pca1<- prcomp(t(combataedata), retx = T, center = T, scale = F)
 pscore<-as.data.frame(abs(pca1$rotation %*% pca1$sdev))
@@ -466,6 +500,662 @@ setorder(pgenescore,-abs_score)
 setorder(pscore,-abs_score)
 ```
 
+#pc quartiles 5/20/20
+```{r}
+#pc1
+scores<-as.data.frame(pca1$x)
+q1pc1<-quantile(scores$PC1,.25)
+q3pc1<-quantile(scores$PC1,.75)
+
+lwrpc1<-scores[scores$PC1<=q1pc1,]
+uprpc1<-scores[scores$PC1>=q3pc1,]
+
+lwrGene1<-prad8[,colnames(prad8) %in% rownames(lwrpc1)]
+uprGene1<-prad8[,colnames(prad8) %in% rownames(uprpc1)]
+
+#elbow plot
+source("C:/Users/u6024115/Desktop/TCGA/findElbow.r")
+
+rotation<-as.data.frame(pca1$rotation)
+
+rotation$AbPC1<-abs(rotation$PC1)
+rotation<-rotation[order(-rotation$AbPC1),]
+rotation$ID <- seq.int(nrow(rotation))
+ggplot(data=rotation, aes( x=ID, y=AbPC1)) +
+  geom_line(color="red")+
+  geom_point()
+
+#using abs gene loadings
+pc_elbow(rotation$AbPC1,"pc elbow")
+PC1g<-rownames(rotation)[1:1734]
+
+fullsub<-prad8[rownames(prad8) %in% PC1g,]
+fullmed<-as.data.frame(apply(fullsub,1,median))
+
+lwrGene1sub<-lwrGene1[rownames(lwrGene1) %in% PC1g,]
+PC1lwrmed<-as.data.frame(apply(lwrGene1sub,1,median))#/fullmed
+PC1lwrmed1<-cbind(rownames(lwrGene1sub),PC1lwrmed)
+colnames(PC1lwrmed1)<-c("Gene.name","median_exp")
+
+uprGene1sub<-uprGene1[rownames(uprGene1) %in% PC1g,]
+PC1uprmed<-as.data.frame(apply(uprGene1sub,1,median))#/fullmed
+PC1uprmed1<-cbind(rownames(uprGene1sub),PC1uprmed)
+colnames(PC1uprmed1)<-c("Gene.name","median_exp")
+  
+PC1lwrchr<-merge(PC1lwrmed1,fullpro, by="Gene.name")
+PC1uprchr<-merge(PC1uprmed1,fullpro, by="Gene.name")
+
+PC1lwrchr$Chromosome.scaffold.name<-factor(PC1lwrchr$Chromosome.scaffold.name, levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"))
+
+PC1uprchr$Chromosome.scaffold.name<-factor(PC1uprchr$Chromosome.scaffold.name, levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"))
+
+PC1lwrchr1<-PC1lwrchr
+PC1lwrchr1$Gene.name<-factor(PC1lwrchr1$Gene.name, levels =  PC1lwrchr1[order(PC1lwrchr1$Chromosome.scaffold.name),"Gene.name"])
+alow<-ggplot(data=PC1lwrchr1, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(0,1)) + xlab("Gene") + ylab("Median Expression") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+PC1uprchr1<-PC1uprchr
+PC1uprchr1$Gene.name<-factor(PC1uprchr1$Gene.name, levels =  PC1uprchr1[order(PC1uprchr1$Chromosome.scaffold.name),"Gene.name"])
+aup<-ggplot(data=PC1uprchr1, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(0,2)) + xlab("Gene") + ylab("Median Expression") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+PC1difCHR<-PC1uprchr1
+PC1difCHR$median_exp<-PC1difCHR$median_exp - PC1lwrchr1$median_exp
+
+adif<-ggplot(data=PC1difCHR, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(-1,2)) + xlab("Gene") + ylab("Median Expression") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+```
+
+```{r}
+#PC2
+scores<-as.data.frame(pca1$x)
+q1PC2<-quantile(scores$PC2,.25)
+q3PC2<-quantile(scores$PC2,.75)
+
+lwrPC2<-scores[scores$PC2<=q1PC2,]
+uprPC2<-scores[scores$PC2>=q3PC2,]
+
+lwrGene1<-prad8[,colnames(prad8) %in% rownames(lwrPC2)]
+uprGene1<-prad8[,colnames(prad8) %in% rownames(uprPC2)]
+
+
+
+#elbow plot
+source("C:/Users/u6024115/Desktop/TCGA/findElbow.r")
+
+rotation<-as.data.frame(pca1$rotation)
+
+rotation$AbPC2<-abs(rotation$PC2)
+rotation<-rotation[order(-rotation$AbPC2),]
+rotation$ID <- seq.int(nrow(rotation))
+ggplot(data=rotation, aes( x=ID, y=AbPC2)) +
+  geom_line(color="red")+
+  geom_point()
+
+#using abs gene loadings
+pc_elbow(rotation$AbPC2,"pc elbow")
+PC2g<-rownames(rotation)[1:489]
+
+lwrGene1sub<-lwrGene1[rownames(lwrGene1) %in% PC2g,]
+PC2lwrmed<-as.data.frame(apply(lwrGene1sub,1,median))
+PC2lwrmed1<-cbind(rownames(lwrGene1sub),PC2lwrmed)
+colnames(PC2lwrmed1)<-c("Gene.name","median_exp")
+
+uprGene1sub<-uprGene1[rownames(uprGene1) %in% PC2g,]
+PC2uprmed<-as.data.frame(apply(uprGene1sub,1,median))
+PC2uprmed1<-cbind(rownames(uprGene1sub),PC2uprmed)
+colnames(PC2uprmed1)<-c("Gene.name","median_exp")
+  
+PC2lwrchr<-merge(PC2lwrmed1,fullpro, by="Gene.name")
+PC2uprchr<-merge(PC2uprmed1,fullpro, by="Gene.name")
+
+PC2lwrchr$Chromosome.scaffold.name<-factor(PC2lwrchr$Chromosome.scaffold.name, levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"))
+
+PC2uprchr$Chromosome.scaffold.name<-factor(PC2uprchr$Chromosome.scaffold.name, levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"))
+
+PC2lwrchr1<-PC2lwrchr
+PC2lwrchr1$Gene.name<-factor(PC2lwrchr1$Gene.name, levels =  PC2lwrchr1[order(PC2lwrchr1$Chromosome.scaffold.name),"Gene.name"])
+alow<-ggplot(data=PC2lwrchr1, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(0,15)) + xlab("Gene") + ylab("Median Expression") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+PC2uprchr1<-PC2uprchr
+PC2uprchr1$Gene.name<-factor(PC2uprchr1$Gene.name, levels =  PC2uprchr1[order(PC2uprchr1$Chromosome.scaffold.name),"Gene.name"])
+aup<-ggplot(data=PC2uprchr1, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(0,15)) + xlab("Gene") + ylab("Median Expression") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+PC2difCHR<-PC2uprchr1
+PC2difCHR$median_exp<-PC2difCHR$median_exp - PC2lwrchr1$median_exp
+
+adif2<-ggplot(data=PC2difCHR, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(-6,6)) + xlab("Gene") + ylab("Median Expression") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+adif2
+```
+
+```{r}
+#PC3
+scores<-as.data.frame(pca1$x)
+q1PC3<-quantile(scores$PC3,.25)
+q3PC3<-quantile(scores$PC3,.75)
+
+lwrPC3<-scores[scores$PC3<=q1PC3,]
+uprPC3<-scores[scores$PC3>=q3PC3,]
+
+lwrGene1<-prad8[,colnames(prad8) %in% rownames(lwrPC3)]
+uprGene1<-prad8[,colnames(prad8) %in% rownames(uprPC3)]
+
+
+
+#elbow plot
+source("C:/Users/u6024115/Desktop/TCGA/findElbow.r")
+
+rotation<-as.data.frame(pca1$rotation)
+
+rotation$AbPC3<-abs(rotation$PC3)
+rotation<-rotation[order(-rotation$AbPC3),]
+rotation$ID <- seq.int(nrow(rotation))
+ggplot(data=rotation, aes( x=ID, y=AbPC3)) +
+  geom_line(color="red")+
+  geom_point()
+
+#using abs gene loadings
+pc_elbow(rotation$AbPC3,"pc elbow")
+PC3g<-rownames(rotation)[1:598]
+
+lwrGene1sub<-lwrGene1[rownames(lwrGene1) %in% PC3g,]
+PC3lwrmed<-as.data.frame(apply(lwrGene1sub,1,median))
+PC3lwrmed1<-cbind(rownames(lwrGene1sub),PC3lwrmed)
+colnames(PC3lwrmed1)<-c("Gene.name","median_exp")
+
+uprGene1sub<-uprGene1[rownames(uprGene1) %in% PC3g,]
+PC3uprmed<-as.data.frame(apply(uprGene1sub,1,median))
+PC3uprmed1<-cbind(rownames(uprGene1sub),PC3uprmed)
+colnames(PC3uprmed1)<-c("Gene.name","median_exp")
+  
+PC3lwrchr<-merge(PC3lwrmed1,fullpro, by="Gene.name")
+PC3uprchr<-merge(PC3uprmed1,fullpro, by="Gene.name")
+
+PC3lwrchr$Chromosome.scaffold.name<-factor(PC3lwrchr$Chromosome.scaffold.name, levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"))
+
+PC3uprchr$Chromosome.scaffold.name<-factor(PC3uprchr$Chromosome.scaffold.name, levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"))
+
+PC3lwrchr1<-PC3lwrchr
+PC3lwrchr1$Gene.name<-factor(PC3lwrchr1$Gene.name, levels =  PC3lwrchr1[order(PC3lwrchr1$Chromosome.scaffold.name),"Gene.name"])
+alow<-ggplot(data=PC3lwrchr1, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(0,15)) + xlab("Gene") + ylab("Median Expression") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+PC3uprchr1<-PC3uprchr
+PC3uprchr1$Gene.name<-factor(PC3uprchr1$Gene.name, levels =  PC3uprchr1[order(PC3uprchr1$Chromosome.scaffold.name),"Gene.name"])
+aup<-ggplot(data=PC3uprchr1, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(0,15)) + xlab("Gene") + ylab("Median Expression") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+PC3difCHR<-PC3uprchr1
+PC3difCHR$median_exp<-PC3difCHR$median_exp - PC3lwrchr1$median_exp
+
+adif3<-ggplot(data=PC3difCHR, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(-6,6)) + xlab("Gene") + ylab("Median Expression") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+adif3
+```
+
+```{r}
+#PC4
+scores<-as.data.frame(pca1$x)
+q1PC4<-quantile(scores$PC4,.25)
+q3PC4<-quantile(scores$PC4,.75)
+
+lwrPC4<-scores[scores$PC4<=q1PC4,]
+uprPC4<-scores[scores$PC4>=q3PC4,]
+
+lwrGene1<-prad8[,colnames(prad8) %in% rownames(lwrPC4)]
+uprGene1<-prad8[,colnames(prad8) %in% rownames(uprPC4)]
+
+
+
+#elbow plot
+source("C:/Users/u6024115/Desktop/TCGA/findElbow.r")
+
+rotation<-as.data.frame(pca1$rotation)
+
+rotation$AbPC4<-abs(rotation$PC4)
+rotation<-rotation[order(-rotation$AbPC4),]
+rotation$ID <- seq.int(nrow(rotation))
+ggplot(data=rotation, aes( x=ID, y=AbPC4)) +
+  geom_line(color="red")+
+  geom_point()
+
+#using abs gene loadings
+pc_elbow(rotation$AbPC4,"pc elbow")
+PC4g<-rownames(rotation)[1:695]
+
+lwrGene1sub<-lwrGene1[rownames(lwrGene1) %in% PC4g,]
+PC4lwrmed<-as.data.frame(apply(lwrGene1sub,1,median))
+PC4lwrmed1<-cbind(rownames(lwrGene1sub),PC4lwrmed)
+colnames(PC4lwrmed1)<-c("Gene.name","median_exp")
+
+uprGene1sub<-uprGene1[rownames(uprGene1) %in% PC4g,]
+PC4uprmed<-as.data.frame(apply(uprGene1sub,1,median))
+PC4uprmed1<-cbind(rownames(uprGene1sub),PC4uprmed)
+colnames(PC4uprmed1)<-c("Gene.name","median_exp")
+  
+PC4lwrchr<-merge(PC4lwrmed1,fullpro, by="Gene.name")
+PC4uprchr<-merge(PC4uprmed1,fullpro, by="Gene.name")
+
+PC4lwrchr$Chromosome.scaffold.name<-factor(PC4lwrchr$Chromosome.scaffold.name, levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"))
+
+PC4uprchr$Chromosome.scaffold.name<-factor(PC4uprchr$Chromosome.scaffold.name, levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"))
+
+PC4lwrchr1<-PC4lwrchr
+PC4lwrchr1$Gene.name<-factor(PC4lwrchr1$Gene.name, levels =  PC4lwrchr1[order(PC4lwrchr1$Chromosome.scaffold.name),"Gene.name"])
+alow<-ggplot(data=PC4lwrchr1, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(0,15)) + xlab("Gene") + ylab("Median Expression") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+PC4uprchr1<-PC4uprchr
+PC4uprchr1$Gene.name<-factor(PC4uprchr1$Gene.name, levels =  PC4uprchr1[order(PC4uprchr1$Chromosome.scaffold.name),"Gene.name"])
+aup<-ggplot(data=PC4uprchr1, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(0,15)) + xlab("Gene") + ylab("Median Expression") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+PC4difCHR<-PC4uprchr1
+PC4difCHR$median_exp<-PC4difCHR$median_exp - PC4lwrchr1$median_exp
+
+adif4<-ggplot(data=PC4difCHR, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(-6,6)) + xlab("Gene") + ylab("Median Expression") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+adif4
+```
+
+#experimenting plots
+```{r}
+
+pcdif11<-merge(PC1difCHR, PC2difCHR, by=c("Chromosome.scaffold.name","Gene.name"), all.x=T, all.y=T)
+pcdif12<-pcdif11[,c(1:6)]
+colnames(pcdif12)<-c("Chromosome.scaffold.name","Gene.name", "med_exp_pc1", "genestableid","genetype","med_exp_pc2")
+pcdif13<-merge(pcdif12, PC3difCHR, by=c("Chromosome.scaffold.name","Gene.name"), all.x=T, all.y=T)
+pcdif14<-pcdif13[,c(1:7)]
+colnames(pcdif14)<-c("Chromosome.scaffold.name","Gene.name", "med_exp_pc1", "genestableid","genetype","med_exp_pc2", "med_exp_pc3")
+pcdif15<-merge(pcdif14, PC4difCHR, by=c("Chromosome.scaffold.name","Gene.name"), all.x=T, all.y=T)
+pcdif16<-pcdif15[,c(1:8)]
+colnames(pcdif16)<-c("Chromosome.scaffold.name","Gene.name", "med_exp_pc1", "genestableid","genetype","med_exp_pc2", "med_exp_pc3", "med_exp_pc4")
+pcdif16$med_exp_pc1[is.na(pcdif16$med_exp_pc1)]<-0
+pcdif16$med_exp_pc2[is.na(pcdif16$med_exp_pc2)]<-0
+pcdif16$med_exp_pc3[is.na(pcdif16$med_exp_pc3)]<-0
+pcdif16$med_exp_pc4[is.na(pcdif16$med_exp_pc4)]<-0
+
+```
+
+```{r}
+pcdif16$Chromosome.scaffold.name<-factor(pcdif16$Chromosome.scaffold.name, levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"))
+
+pcdif16$Gene.name<-factor(pcdif16$Gene.name, levels =  pcdif16[order(pcdif16$Chromosome.scaffold.name),"Gene.name"])
+
+g1<-ggplot(data=pcdif16, mapping = aes(Gene.name, med_exp_pc1)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(-6,6)) + xlab("Gene") + ylab("Median Expression") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()) + geom_hline(yintercept=0) + ggtitle("Difference in Median Gene Expression PC1")
+
+g2<-ggplot(data=pcdif16, mapping = aes(Gene.name, med_exp_pc2)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(-6,6)) + xlab("Gene") + ylab("Median Expression") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()) + geom_hline(yintercept=0)+ ggtitle("Difference in Median Gene Expression PC2")
+
+g3<-ggplot(data=pcdif16, mapping = aes(Gene.name, med_exp_pc3)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(-6,6)) + xlab("Gene") + ylab("Median Expression") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+ geom_hline(yintercept=0) + ggtitle("Difference in Median Gene Expression PC3")
+
+g4<-ggplot(data=pcdif16, mapping = aes(Gene.name, med_exp_pc4)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(-6,6)) + xlab("Gene") + ylab("Median Expression") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+ geom_hline(yintercept=0) + ggtitle("Difference in Median Gene Expression PC4")
+```
+
+```{r}
+#library(gridExtra)
+grid.arrange(g1,g2,g3,g4, nrow=4)
+```
+
+#relative difference plots q1, q3
+```{r}
+#pc1
+scores<-as.data.frame(pca1$x)
+q1pc1<-quantile(scores$PC1,.25)
+q3pc1<-quantile(scores$PC1,.75)
+
+lwrpc1<-scores[scores$PC1<=q1pc1,]
+uprpc1<-scores[scores$PC1>=q3pc1,]
+
+lwrGene1<-prad8[,colnames(prad8) %in% rownames(lwrpc1)]
+uprGene1<-prad8[,colnames(prad8) %in% rownames(uprpc1)]
+
+#elbow plot
+source("C:/Users/u6024115/Desktop/TCGA/findElbow.r")
+
+rotation<-as.data.frame(pca1$rotation)
+
+rotation$AbPC1<-abs(rotation$PC1)
+rotation<-rotation[order(-rotation$AbPC1),]
+rotation$ID <- seq.int(nrow(rotation))
+ggplot(data=rotation, aes( x=ID, y=AbPC1)) +
+  geom_line(color="red")+
+  geom_point()
+
+#using abs gene loadings
+pc_elbow(rotation$AbPC1,"pc elbow")
+PC1g<-rownames(rotation)[1:1734]
+
+fullsub<-prad8[rownames(prad8) %in% PC1g,]
+fullmed<-as.data.frame(apply(fullsub,1,median))
+
+lwrGene1sub<-lwrGene1[rownames(lwrGene1) %in% PC1g,]
+PC1lwrmed<-as.data.frame(apply(lwrGene1sub,1,median))/fullmed
+PC1lwrmed1<-cbind(rownames(lwrGene1sub),PC1lwrmed)
+colnames(PC1lwrmed1)<-c("Gene.name","median_exp")
+
+uprGene1sub<-uprGene1[rownames(uprGene1) %in% PC1g,]
+PC1uprmed<-as.data.frame(apply(uprGene1sub,1,median))/fullmed
+PC1uprmed1<-cbind(rownames(uprGene1sub),PC1uprmed)
+colnames(PC1uprmed1)<-c("Gene.name","median_exp")
+  
+PC1lwrchr<-merge(PC1lwrmed1,fullpro, by="Gene.name")
+PC1uprchr<-merge(PC1uprmed1,fullpro, by="Gene.name")
+
+PC1lwrchr$Chromosome.scaffold.name<-factor(PC1lwrchr$Chromosome.scaffold.name, levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"))
+
+PC1uprchr$Chromosome.scaffold.name<-factor(PC1uprchr$Chromosome.scaffold.name, levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"))
+
+PC1lwrchr1<-PC1lwrchr
+PC1lwrchr1$Gene.name<-factor(PC1lwrchr1$Gene.name, levels =  PC1lwrchr1[order(PC1lwrchr1$Chromosome.scaffold.name),"Gene.name"])
+alow<-ggplot(data=PC1lwrchr1, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(0,2)) + xlab("Gene") + ylab("Relative Difference") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+PC1uprchr1<-PC1uprchr
+PC1uprchr1$Gene.name<-factor(PC1uprchr1$Gene.name, levels =  PC1uprchr1[order(PC1uprchr1$Chromosome.scaffold.name),"Gene.name"])
+aup<-ggplot(data=PC1uprchr1, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(0,2)) + xlab("Gene") + ylab("Relative Difference") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+PC1difCHR<-PC1uprchr1
+PC1difCHR$median_exp<-PC1difCHR$median_exp - PC1lwrchr1$median_exp
+
+adif<-ggplot(data=PC1difCHR, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(-1,2)) + xlab("Gene") + ylab("Relative Difference") + labs(fill="Chromosome") +ggtitle("Relative Difference in Gene Expression PC1")+
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+```
+
+```{r}
+#PC2
+scores<-as.data.frame(pca1$x)
+q1PC2<-quantile(scores$PC2,.25)
+q3PC2<-quantile(scores$PC2,.75)
+
+lwrPC2<-scores[scores$PC2<=q1PC2,]
+uprPC2<-scores[scores$PC2>=q3PC2,]
+
+lwrGene1<-prad8[,colnames(prad8) %in% rownames(lwrPC2)]
+uprGene1<-prad8[,colnames(prad8) %in% rownames(uprPC2)]
+
+
+
+#elbow plot
+source("C:/Users/u6024115/Desktop/TCGA/findElbow.r")
+
+rotation<-as.data.frame(pca1$rotation)
+
+rotation$AbPC2<-abs(rotation$PC2)
+rotation<-rotation[order(-rotation$AbPC2),]
+rotation$ID <- seq.int(nrow(rotation))
+ggplot(data=rotation, aes( x=ID, y=AbPC2)) +
+  geom_line(color="red")+
+  geom_point()
+
+#using abs gene loadings
+pc_elbow(rotation$AbPC2,"pc elbow")
+PC2g<-rownames(rotation)[1:489]
+
+
+fullsub<-prad8[rownames(prad8) %in% PC2g,]
+fullmed<-as.data.frame(apply(fullsub,1,median))
+
+
+lwrGene1sub<-lwrGene1[rownames(lwrGene1) %in% PC2g,]
+PC2lwrmed<-as.data.frame(apply(lwrGene1sub,1,median))/fullmed
+PC2lwrmed1<-cbind(rownames(lwrGene1sub),PC2lwrmed)
+colnames(PC2lwrmed1)<-c("Gene.name","median_exp")
+
+uprGene1sub<-uprGene1[rownames(uprGene1) %in% PC2g,]
+PC2uprmed<-as.data.frame(apply(uprGene1sub,1,median))/fullmed
+PC2uprmed1<-cbind(rownames(uprGene1sub),PC2uprmed)
+colnames(PC2uprmed1)<-c("Gene.name","median_exp")
+  
+PC2lwrchr<-merge(PC2lwrmed1,fullpro, by="Gene.name")
+PC2uprchr<-merge(PC2uprmed1,fullpro, by="Gene.name")
+
+PC2lwrchr$Chromosome.scaffold.name<-factor(PC2lwrchr$Chromosome.scaffold.name, levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"))
+
+PC2uprchr$Chromosome.scaffold.name<-factor(PC2uprchr$Chromosome.scaffold.name, levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"))
+
+PC2lwrchr1<-PC2lwrchr
+PC2lwrchr1$Gene.name<-factor(PC2lwrchr1$Gene.name, levels =  PC2lwrchr1[order(PC2lwrchr1$Chromosome.scaffold.name),"Gene.name"])
+alow<-ggplot(data=PC2lwrchr1, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(0,2)) + xlab("Gene") + ylab("Relative Difference") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+PC2uprchr1<-PC2uprchr
+PC2uprchr1$Gene.name<-factor(PC2uprchr1$Gene.name, levels =  PC2uprchr1[order(PC2uprchr1$Chromosome.scaffold.name),"Gene.name"])
+aup<-ggplot(data=PC2uprchr1, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(0,2)) + xlab("Gene") + ylab("Relative Difference") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+PC2difCHR<-PC2uprchr1
+PC2difCHR$median_exp<-PC2difCHR$median_exp - PC2lwrchr1$median_exp
+
+adif2<-ggplot(data=PC2difCHR, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(-1,2)) + xlab("Gene") + ylab("Relative Difference") + labs(fill="Chromosome") + ggtitle("Relative Difference in Gene Expression PC2")+
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+adif2
+```
+
+```{r}
+#PC3
+scores<-as.data.frame(pca1$x)
+q1PC3<-quantile(scores$PC3,.25)
+q3PC3<-quantile(scores$PC3,.75)
+
+lwrPC3<-scores[scores$PC3<=q1PC3,]
+uprPC3<-scores[scores$PC3>=q3PC3,]
+
+lwrGene1<-prad8[,colnames(prad8) %in% rownames(lwrPC3)]
+uprGene1<-prad8[,colnames(prad8) %in% rownames(uprPC3)]
+
+
+
+#elbow plot
+source("C:/Users/u6024115/Desktop/TCGA/findElbow.r")
+
+rotation<-as.data.frame(pca1$rotation)
+
+rotation$AbPC3<-abs(rotation$PC3)
+rotation<-rotation[order(-rotation$AbPC3),]
+rotation$ID <- seq.int(nrow(rotation))
+ggplot(data=rotation, aes( x=ID, y=AbPC3)) +
+  geom_line(color="red")+
+  geom_point()
+
+#using abs gene loadings
+pc_elbow(rotation$AbPC3,"pc elbow")
+PC3g<-rownames(rotation)[1:598]
+
+fullsub<-prad8[rownames(prad8) %in% PC3g,]
+fullmed<-as.data.frame(apply(fullsub,1,median))
+
+lwrGene1sub<-lwrGene1[rownames(lwrGene1) %in% PC3g,]
+PC3lwrmed<-as.data.frame(apply(lwrGene1sub,1,median))/fullmed
+PC3lwrmed1<-cbind(rownames(lwrGene1sub),PC3lwrmed)
+colnames(PC3lwrmed1)<-c("Gene.name","median_exp")
+
+uprGene1sub<-uprGene1[rownames(uprGene1) %in% PC3g,]
+PC3uprmed<-as.data.frame(apply(uprGene1sub,1,median))/fullmed
+PC3uprmed1<-cbind(rownames(uprGene1sub),PC3uprmed)
+colnames(PC3uprmed1)<-c("Gene.name","median_exp")
+  
+PC3lwrchr<-merge(PC3lwrmed1,fullpro, by="Gene.name")
+PC3uprchr<-merge(PC3uprmed1,fullpro, by="Gene.name")
+
+PC3lwrchr$Chromosome.scaffold.name<-factor(PC3lwrchr$Chromosome.scaffold.name, levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"))
+
+PC3uprchr$Chromosome.scaffold.name<-factor(PC3uprchr$Chromosome.scaffold.name, levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"))
+
+PC3lwrchr1<-PC3lwrchr
+PC3lwrchr1$Gene.name<-factor(PC3lwrchr1$Gene.name, levels =  PC3lwrchr1[order(PC3lwrchr1$Chromosome.scaffold.name),"Gene.name"])
+alow<-ggplot(data=PC3lwrchr1, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(0,2)) + xlab("Gene") + ylab("Relative Difference") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+PC3uprchr1<-PC3uprchr
+PC3uprchr1$Gene.name<-factor(PC3uprchr1$Gene.name, levels =  PC3uprchr1[order(PC3uprchr1$Chromosome.scaffold.name),"Gene.name"])
+aup<-ggplot(data=PC3uprchr1, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(0,2)) + xlab("Gene") + ylab("Relative Difference") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+PC3difCHR<-PC3uprchr1
+PC3difCHR$median_exp<-PC3difCHR$median_exp - PC3lwrchr1$median_exp
+
+adif3<-ggplot(data=PC3difCHR, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(-2,2)) + xlab("Gene") + ylab("Relative Difference") + labs(fill="Chromosome") + ggtitle("Relative Difference in Gene Expression PC3")+
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+adif3
+```
+
+```{r}
+#PC4
+scores<-as.data.frame(pca1$x)
+q1PC4<-quantile(scores$PC4,.25)
+q3PC4<-quantile(scores$PC4,.75)
+
+lwrPC4<-scores[scores$PC4<=q1PC4,]
+uprPC4<-scores[scores$PC4>=q3PC4,]
+
+lwrGene1<-prad8[,colnames(prad8) %in% rownames(lwrPC4)]
+uprGene1<-prad8[,colnames(prad8) %in% rownames(uprPC4)]
+
+
+
+#elbow plot
+source("C:/Users/u6024115/Desktop/TCGA/findElbow.r")
+
+rotation<-as.data.frame(pca1$rotation)
+
+rotation$AbPC4<-abs(rotation$PC4)
+rotation<-rotation[order(-rotation$AbPC4),]
+rotation$ID <- seq.int(nrow(rotation))
+ggplot(data=rotation, aes( x=ID, y=AbPC4)) +
+  geom_line(color="red")+
+  geom_point()
+
+#using abs gene loadings
+pc_elbow(rotation$AbPC4,"pc elbow")
+PC4g<-rownames(rotation)[1:695]
+
+fullsub<-prad8[rownames(prad8) %in% PC4g,]
+fullmed<-as.data.frame(apply(fullsub,1,median))
+
+lwrGene1sub<-lwrGene1[rownames(lwrGene1) %in% PC4g,]
+PC4lwrmed<-as.data.frame(apply(lwrGene1sub,1,median))/fullmed
+PC4lwrmed1<-cbind(rownames(lwrGene1sub),PC4lwrmed)
+colnames(PC4lwrmed1)<-c("Gene.name","median_exp")
+
+uprGene1sub<-uprGene1[rownames(uprGene1) %in% PC4g,]
+PC4uprmed<-as.data.frame(apply(uprGene1sub,1,median))/fullmed
+PC4uprmed1<-cbind(rownames(uprGene1sub),PC4uprmed)
+colnames(PC4uprmed1)<-c("Gene.name","median_exp")
+  
+PC4lwrchr<-merge(PC4lwrmed1,fullpro, by="Gene.name")
+PC4uprchr<-merge(PC4uprmed1,fullpro, by="Gene.name")
+
+PC4lwrchr$Chromosome.scaffold.name<-factor(PC4lwrchr$Chromosome.scaffold.name, levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"))
+
+PC4uprchr$Chromosome.scaffold.name<-factor(PC4uprchr$Chromosome.scaffold.name, levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"))
+
+PC4lwrchr1<-PC4lwrchr
+PC4lwrchr1$Gene.name<-factor(PC4lwrchr1$Gene.name, levels =  PC4lwrchr1[order(PC4lwrchr1$Chromosome.scaffold.name),"Gene.name"])
+alow<-ggplot(data=PC4lwrchr1, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(0,2)) + xlab("Gene") + ylab("Relative Difference") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+PC4uprchr1<-PC4uprchr
+PC4uprchr1$Gene.name<-factor(PC4uprchr1$Gene.name, levels =  PC4uprchr1[order(PC4uprchr1$Chromosome.scaffold.name),"Gene.name"])
+aup<-ggplot(data=PC4uprchr1, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(0,2)) + xlab("Gene") + ylab("Relative Difference") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+PC4difCHR<-PC4uprchr1
+PC4difCHR$median_exp<-PC4difCHR$median_exp - PC4lwrchr1$median_exp
+
+adif4<-ggplot(data=PC4difCHR, mapping = aes(Gene.name, median_exp)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(-1,2)) + xlab("Gene") + ylab("Relative Difference") + labs(fill="Chromosome") + ggtitle("Relative Difference in Gene Expression PC4")+
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+adif4
+```
+
+#experimenting plots
+```{r}
+
+pcdif111<-merge(PC1difCHR, PC2difCHR, by=c("Chromosome.scaffold.name","Gene.name"), all.x=T, all.y=T)
+pcdif112<-pcdif111[,c(1:6)]
+colnames(pcdif112)<-c("Chromosome.scaffold.name","Gene.name", "med_exp_pc1", "genestableid","genetype","med_exp_pc2")
+pcdif113<-merge(pcdif112, PC3difCHR, by=c("Chromosome.scaffold.name","Gene.name"), all.x=T, all.y=T)
+pcdif114<-pcdif113[,c(1:7)]
+colnames(pcdif114)<-c("Chromosome.scaffold.name","Gene.name", "med_exp_pc1", "genestableid","genetype","med_exp_pc2", "med_exp_pc3")
+pcdif115<-merge(pcdif114, PC4difCHR, by=c("Chromosome.scaffold.name","Gene.name"), all.x=T, all.y=T)
+pcdif116<-pcdif115[,c(1:8)]
+colnames(pcdif116)<-c("Chromosome.scaffold.name","Gene.name", "med_exp_pc1", "genestableid","genetype","med_exp_pc2", "med_exp_pc3", "med_exp_pc4")
+pcdif116$med_exp_pc1[is.na(pcdif116$med_exp_pc1)]<-0
+pcdif116$med_exp_pc2[is.na(pcdif116$med_exp_pc2)]<-0
+pcdif116$med_exp_pc3[is.na(pcdif116$med_exp_pc3)]<-0
+pcdif116$med_exp_pc4[is.na(pcdif116$med_exp_pc4)]<-0
+
+```
+
+```{r}
+pcdif116$Chromosome.scaffold.name<-factor(pcdif116$Chromosome.scaffold.name, levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"))
+
+pcdif116$Gene.name<-factor(pcdif116$Gene.name, levels =  pcdif116[order(pcdif116$Chromosome.scaffold.name),"Gene.name"])
+
+gg1<-ggplot(data=pcdif116, mapping = aes(Gene.name, med_exp_pc1)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(-1.5,1.5)) + xlab("Gene") + ylab("Relative Difference") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()) + geom_hline(yintercept=0) + ggtitle("Relative Difference in Gene Expression PC1")
+
+gg2<-ggplot(data=pcdif116, mapping = aes(Gene.name, med_exp_pc2)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(-1.5,1.5)) + xlab("Gene") + ylab("Relative Difference") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()) + geom_hline(yintercept=0)+ ggtitle("Relative Difference in Gene Expression PC2")
+
+gg3<-ggplot(data=pcdif116, mapping = aes(Gene.name, med_exp_pc3)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(-1.5,1.5)) + xlab("Gene") + ylab("Relative Difference") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+ geom_hline(yintercept=0) + ggtitle("Relative Difference in Gene Expression PC3")
+
+gg4<-ggplot(data=pcdif116, mapping = aes(Gene.name, med_exp_pc4)) + geom_bar(stat="identity", aes(fill=Chromosome.scaffold.name)) + scale_y_continuous(limits = c(-1.5,1.5)) + xlab("Gene") + ylab("Relative Difference") + labs(fill="Chromosome") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+ geom_hline(yintercept=0) + ggtitle("Relative Difference in Gene Expression PC4")
+```
+
+```{r}
+#library(gridExtra)
+grid.arrange(gg1,gg2,gg3,gg4, nrow=4)
+```
+
+#used for comparing PCs
 ```{r}
 #files for heidi
 write.csv(pca1$rotation, "rotation_matrix.csv")
@@ -1531,6 +2221,21 @@ if ((a[[1]]$`Pr(>F)`<0.05)[1]==TRUE) {print(i)}
 ```
 
 ```{r}
+summary(lm(pcaindv5$PC3 ~ pcaindv5$avgRNA_purity, data=pcaindv5))
+summary(lm(pcaindv5$PC4 ~ pcaindv5$avgRNA_purity, data=pcaindv5))
+summary(lm(pcaindv5$PC5 ~ pcaindv5$avgRNA_purity, data=pcaindv5))
+summary(lm(pcaindv5$PC7 ~ pcaindv5$avgRNA_purity, data=pcaindv5))
+summary(lm(pcaindv5$PC9 ~ pcaindv5$avgRNA_purity, data=pcaindv5))
+summary(lm(pcaindv5$PC11 ~ pcaindv5$avgRNA_purity, data=pcaindv5))
+
+
+print("tumor cellurlarity path")
+(summary(aov(pcaindv5$PC1 ~ pcaindv5$Tumor_cellularity_pathology, data=pcaindv5)))
+(summary(lm(pcaindv5$PC4 ~ pcaindv5$Tumor_cellularity_pathology, data=pcaindv5)))
+
+```
+
+```{r}
 #model, outcome=gleason
 #subtype
 gleasonsub.d<-pcaindv5[,c("Subtype","riskrecode")]
@@ -1556,6 +2261,49 @@ gleasonsubexint.m<-mlogit(riskrecode ~ 1 | Subtype + racerecode + age_centered +
 summary(gleasonsubexint.m)
 
 #=============================================#
+
+
+#iCluster
+gleasonic.d<-pcaindv5[,c("iCluster","riskrecode")]
+gleasonic.d2<-mlogit.data(gleasonic.d, varying = NULL, choice = "riskrecode",shape = "wide")
+gleasonic.m<-mlogit(riskrecode ~ 1 | iCluster, data=gleasonic.d2, reflevel = 1)
+summary(gleasonic.m)
+
+#iClusterexpanded
+gleasonicex.d<-pcaindv5[,c("iCluster","riskrecode","racerecode","age_centered")]
+gleasonicex.d2<-mlogit.data(gleasonicex.d, varying = NULL, choice = "riskrecode",shape = "wide")
+gleasonicex.m<-mlogit(riskrecode ~ 1 | iCluster + racerecode + age_centered, data=gleasonicex.d2, reflevel = 1)
+summary(gleasonicex.m)
+
+#iClusterexpanded int
+gleasonicexint.d<-pcaindv5[,c("iCluster","riskrecode","racerecode","age_centered")]
+gleasonicexint.d2<-mlogit.data(gleasonicexint.d, varying = NULL, choice = "riskrecode",shape = "wide")
+gleasonicexint.m<-mlogit(riskrecode ~ 1 | iCluster * (racerecode + age_centered), data=gleasonicexint.d2, reflevel = 1)
+summary(gleasonicexint.m)
+
+#============================================#
+
+#mRNA_cluster
+gleasonmrna.d<-pcaindv5[,c("mRNA_cluster","riskrecode")]
+gleasonmrna.d2<-mlogit.data(gleasonmrna.d, varying = NULL, choice = "riskrecode",shape = "wide")
+gleasonmrna.m<-mlogit(riskrecode ~ 1 | mRNA_cluster, data=gleasonmrna.d2, reflevel = 1)
+summary(gleasonmrna.m)
+
+#mRNA_clusterexpanded
+gleasonmrnaex.d<-pcaindv5[,c("mRNA_cluster","riskrecode","racerecode","age_centered")]
+gleasonmrnaex.d2<-mlogit.data(gleasonmrnaex.d, varying = NULL, choice = "riskrecode",shape = "wide")
+gleasonmrnaex.m<-mlogit(riskrecode ~ 1 | mRNA_cluster + racerecode + age_centered, data=gleasonmrnaex.d2, reflevel = 1)
+summary(gleasonmrnaex.m)
+
+
+#mRNA_clusterexpanded int
+gleasonmrnaexint.d<-pcaindv5[,c("mRNA_cluster","riskrecode","racerecode","age_centered")]
+gleasonmrnaexint.d2<-mlogit.data(gleasonmrnaexint.d, varying = NULL, choice = "riskrecode",shape = "wide")
+gleasonmrnaexint.m<-mlogit(riskrecode ~ 1 | mRNA_cluster * (racerecode + age_centered), data=gleasonmrnaexint.d2, reflevel = 1)
+summary(gleasonmrnaexint.m)
+
+#==================================================#
+
 
 #PCs
 
@@ -1669,6 +2417,28 @@ path.t.m.mrnaexint<-mlogit(ajcc.path.t.recode ~ 1 | mRNA_cluster + racerecode + 
 summary(path.t.m.mrnaexint)
 
 #======================================#
+
+#Subtype
+
+path.t.dsub<-pcaindv5[,c("Subtype","ajcc.path.t.recode")]
+path.t.dsub2<-mlogit.data(path.t.dsub, varying = NULL, choice = "ajcc.path.t.recode",shape = "wide")
+path.t.msub<-mlogit(ajcc.path.t.recode ~ 1 | Subtype, data = path.t.dsub2, reflevel = 1)
+summary(path.t.msub)
+
+path.t.dsubex<-pcaindv5[,c("Subtype","ajcc.path.t.recode","racerecode","age_centered")]
+path.t.dsubex2<-mlogit.data(path.t.dsubex, varying = NULL, choice = "ajcc.path.t.recode",shape = "wide")
+path.t.msubex<-mlogit(ajcc.path.t.recode ~ 1 | Subtype + racerecode + age_centered, data = path.t.dsubex2, reflevel = 1)
+summary(path.t.msubex)
+
+
+#singularity issues - removed "other" race
+path.t.dsubexint<-pcaindv5r[,c("Subtype","ajcc.path.t.recode","racerecode","age_centered")]
+path.t.dsubexint2<-mlogit.data(path.t.dsubexint, varying = NULL, choice = "ajcc.path.t.recode",shape = "wide")
+path.t.msubexint<-mlogit(ajcc.path.t.recode ~ 1 | Subtype + racerecode + age_centered + Subtype * (racerecode + age_centered), data = path.t.dsubexint2, reflevel = 1)
+summary(path.t.msubexint)
+
+#=======================================#
+
 
 #PCs
 
